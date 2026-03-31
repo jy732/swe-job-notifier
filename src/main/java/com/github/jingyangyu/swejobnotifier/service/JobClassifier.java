@@ -22,6 +22,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 public class JobClassifier {
 
     private static final int BATCH_SIZE = 50;
+    private static final long BATCH_DELAY_MS = 5000; // 5s between batches to respect rate limits
 
     private static final String SYSTEM_PROMPT =
             "Classify each job as Y (mid-level SWE) or N. "
@@ -46,7 +47,7 @@ public class JobClassifier {
         this.apiKey = apiKey;
         this.model = model;
         this.retryTemplate =
-                RetryTemplate.builder().maxAttempts(3).exponentialBackoff(1000, 2, 4000).build();
+                RetryTemplate.builder().maxAttempts(3).exponentialBackoff(5000, 2, 20000).build();
     }
 
     /**
@@ -70,6 +71,15 @@ public class JobClassifier {
         List<JobPosting> classified = new ArrayList<>();
 
         for (int i = 0; i < jobs.size(); i += BATCH_SIZE) {
+            if (i > 0) {
+                try {
+                    log.debug("Waiting {}ms before next Gemini batch", BATCH_DELAY_MS);
+                    Thread.sleep(BATCH_DELAY_MS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
             List<JobPosting> batch = jobs.subList(i, Math.min(i + BATCH_SIZE, jobs.size()));
             List<JobPosting> result = classifyBatch(batch);
             classified.addAll(result);

@@ -1,19 +1,16 @@
 package com.github.jingyangyu.swejobnotifier.scraper;
 
+import com.github.jingyangyu.swejobnotifier.model.JobPosting;
+import com.github.jingyangyu.swejobnotifier.util.CsvUtil;
 import java.time.Instant;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
-
-import com.github.jingyangyu.swejobnotifier.model.JobPosting;
-import com.github.jingyangyu.swejobnotifier.util.CsvUtil;
-
-import lombok.extern.slf4j.Slf4j;
 
 /** Scraper for companies using the Lever Postings API. */
 @Slf4j
@@ -30,6 +27,7 @@ public class LeverScraper implements JobScraper {
             @Value("${job.companies.lever:}") String companiesCsv) {
         this.webClient = webClientBuilder.build();
         this.companies = CsvUtil.parse(companiesCsv);
+        log.info("Lever scraper initialized with {} company(ies)", companies.size());
     }
 
     @Override
@@ -52,8 +50,7 @@ public class LeverScraper implements JobScraper {
                             .uri(API_URL, company)
                             .retrieve()
                             .bodyToMono(
-                                    new ParameterizedTypeReference<
-                                            List<Map<String, Object>>>() {})
+                                    new ParameterizedTypeReference<List<Map<String, Object>>>() {})
                             .block();
 
             if (postings == null) {
@@ -95,8 +92,7 @@ public class LeverScraper implements JobScraper {
                                         .location(location)
                                         .description(
                                                 posting.get("descriptionPlain") != null
-                                                        ? posting.get("descriptionPlain")
-                                                                .toString()
+                                                        ? posting.get("descriptionPlain").toString()
                                                         : "")
                                         .postedDate(postedDate)
                                         .detectedAt(Instant.now())

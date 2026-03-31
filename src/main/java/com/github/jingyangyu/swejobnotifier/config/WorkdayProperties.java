@@ -3,11 +3,9 @@ package com.github.jingyangyu.swejobnotifier.config;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-
-import org.springframework.boot.context.properties.ConfigurationProperties;
-
 import lombok.Getter;
 import lombok.Setter;
+import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /** Configuration properties for Workday company career sites. */
 @ConfigurationProperties(prefix = "job.workday")
@@ -38,8 +36,7 @@ public class WorkdayProperties {
 
         /** Returns the base URL for this Workday instance. */
         public String baseUrl() {
-            return String.format(
-                    "https://%s.wd%d.myworkdayjobs.com", subdomain, instance);
+            return String.format("https://%s.wd%d.myworkdayjobs.com", subdomain, instance);
         }
 
         /** Returns the CXS API URL for job search requests. */

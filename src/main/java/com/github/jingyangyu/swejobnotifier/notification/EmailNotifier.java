@@ -1,11 +1,14 @@
 package com.github.jingyangyu.swejobnotifier.notification;
 
+import com.github.jingyangyu.swejobnotifier.model.JobPosting;
+import jakarta.mail.MessagingException;
+import jakarta.mail.internet.MimeMessage;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
-
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.MailException;
 import org.springframework.mail.javamail.JavaMailSender;
@@ -14,13 +17,9 @@ import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Component;
 
-import com.github.jingyangyu.swejobnotifier.model.JobPosting;
-
-import jakarta.mail.MessagingException;
-import jakarta.mail.internet.MimeMessage;
-import lombok.extern.slf4j.Slf4j;
-
-/** Sends HTML email notifications for job alerts and daily summaries via Spring Mail (Gmail SMTP). */
+/**
+ * Sends HTML email notifications for job alerts and daily summaries via Spring Mail (Gmail SMTP).
+ */
 @Slf4j
 @Component
 public class EmailNotifier {
@@ -48,6 +47,9 @@ public class EmailNotifier {
      */
     public boolean sendNewJobAlert(List<JobPosting> newJobs) {
         if (newJobs.isEmpty() || toAddress.isBlank()) {
+            if (toAddress.isBlank()) {
+                log.warn("Notification email not configured — skipping job alert");
+            }
             return true;
         }
 
@@ -63,10 +65,15 @@ public class EmailNotifier {
         }
     }
 
-    /** Sends a daily summary email of recent job postings. */
-    public void sendDailySummary(List<JobPosting> recentJobs) {
+    /**
+     * Sends a daily summary email of recent job postings.
+     *
+     * @return true if email was sent successfully, false otherwise
+     */
+    public boolean sendDailySummary(List<JobPosting> recentJobs) {
         if (toAddress.isBlank()) {
-            return;
+            log.warn("Notification email not configured — skipping daily summary");
+            return false;
         }
 
         String subject;
@@ -85,8 +92,10 @@ public class EmailNotifier {
         }
         try {
             sendHtmlEmail(subject, body);
+            return true;
         } catch (Exception e) {
             log.error("Failed to send daily summary after retries: {}", e.getMessage(), e);
+            return false;
         }
     }
 

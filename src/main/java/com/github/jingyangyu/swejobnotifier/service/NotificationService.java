@@ -1,15 +1,12 @@
 package com.github.jingyangyu.swejobnotifier.service;
 
-import java.util.List;
-
-import org.springframework.stereotype.Service;
-
 import com.github.jingyangyu.swejobnotifier.model.JobPosting;
 import com.github.jingyangyu.swejobnotifier.notification.EmailNotifier;
 import com.github.jingyangyu.swejobnotifier.repository.JobPostingRepository;
-
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
 
 /**
  * Sends instant alert notifications for newly detected jobs and marks them as notified on success.

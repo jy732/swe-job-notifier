@@ -1,12 +1,11 @@
 package com.github.jingyangyu.swejobnotifier;
 
+import com.github.jingyangyu.swejobnotifier.config.WorkdayProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.retry.annotation.EnableRetry;
 import org.springframework.scheduling.annotation.EnableScheduling;
-
-import com.github.jingyangyu.swejobnotifier.config.WorkdayProperties;
 
 /**
  * Entry point for the SWE Job Notifier application. Monitors tech company career sites for

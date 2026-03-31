@@ -1,5 +1,8 @@
 package com.github.jingyangyu.swejobnotifier.scraper;
 
+import com.github.jingyangyu.swejobnotifier.config.WorkdayProperties;
+import com.github.jingyangyu.swejobnotifier.config.WorkdayProperties.WorkdayCompany;
+import com.github.jingyangyu.swejobnotifier.model.JobPosting;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -7,17 +10,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
-
-import com.github.jingyangyu.swejobnotifier.config.WorkdayProperties;
-import com.github.jingyangyu.swejobnotifier.config.WorkdayProperties.WorkdayCompany;
-import com.github.jingyangyu.swejobnotifier.model.JobPosting;
-
-import lombok.extern.slf4j.Slf4j;
 
 /**
  * Scraper for companies that use Workday as their ATS. Posts search requests to the Workday CXS
@@ -36,6 +33,9 @@ public class WorkdayScraper implements JobScraper {
     public WorkdayScraper(WebClient.Builder webClientBuilder, WorkdayProperties properties) {
         this.webClient = webClientBuilder.build();
         this.properties = properties;
+        log.info(
+                "Workday scraper initialized with {} company(ies)",
+                properties.getCompanies().size());
     }
 
     @Override

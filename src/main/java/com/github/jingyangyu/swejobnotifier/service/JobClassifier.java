@@ -1,20 +1,17 @@
 package com.github.jingyangyu.swejobnotifier.service;
 
+import com.github.jingyangyu.swejobnotifier.model.JobPosting;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
 import org.springframework.retry.support.RetryTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
-
-import com.github.jingyangyu.swejobnotifier.model.JobPosting;
-
-import lombok.extern.slf4j.Slf4j;
 
 /**
  * Classifies job postings using the Gemini Flash LLM to determine if they are mid-level SWE II
@@ -49,10 +46,7 @@ public class JobClassifier {
         this.apiKey = apiKey;
         this.model = model;
         this.retryTemplate =
-                RetryTemplate.builder()
-                        .maxAttempts(3)
-                        .exponentialBackoff(1000, 2, 4000)
-                        .build();
+                RetryTemplate.builder().maxAttempts(3).exponentialBackoff(1000, 2, 4000).build();
     }
 
     /**
@@ -68,7 +62,8 @@ public class JobClassifier {
         }
 
         if (apiKey == null || apiKey.isBlank()) {
-            log.warn("Gemini API key not configured — returning all pre-filtered jobs unclassified");
+            log.warn(
+                    "Gemini API key not configured — returning all pre-filtered jobs unclassified");
             return jobs;
         }
 
@@ -85,9 +80,16 @@ public class JobClassifier {
 
     @SuppressWarnings("unchecked")
     private List<JobPosting> classifyBatch(List<JobPosting> batch) {
+        log.info("Classifying batch of {} job(s) via Gemini", batch.size());
         try {
             return retryTemplate.execute(
                     context -> {
+                        if (context.getRetryCount() > 0) {
+                            log.warn(
+                                    "Gemini retry attempt {} for batch of {}",
+                                    context.getRetryCount(),
+                                    batch.size());
+                        }
                         String userPrompt = buildUserPrompt(batch);
 
                         Map<String, Object> requestBody =
@@ -127,7 +129,10 @@ public class JobClassifier {
                         return parseResponse(response, batch);
                     });
         } catch (Exception e) {
-            log.error("Gemini classification failed after retries, skipping batch of {}", batch.size(), e);
+            log.error(
+                    "Gemini classification failed after retries, skipping batch of {}",
+                    batch.size(),
+                    e);
             return Collections.emptyList();
         }
     }
@@ -163,6 +168,8 @@ public class JobClassifier {
             List<Map<String, Object>> parts = (List<Map<String, Object>>) content.get("parts");
             String text = parts.get(0).get("text").toString().trim();
 
+            log.debug("Gemini raw response: {}", text);
+
             List<JobPosting> result = new ArrayList<>();
             String[] lines = text.split("\n");
             for (String line : lines) {
@@ -179,6 +186,8 @@ public class JobClassifier {
                     }
                 }
             }
+            log.info(
+                    "Gemini classified {}/{} job(s) as mid-level SWE", result.size(), batch.size());
             return result;
         } catch (Exception e) {
             log.warn("Failed to parse Gemini response", e);

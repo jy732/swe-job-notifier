@@ -1,20 +1,17 @@
 package com.github.jingyangyu.swejobnotifier.service;
 
+import com.github.jingyangyu.swejobnotifier.model.JobPosting;
+import com.github.jingyangyu.swejobnotifier.repository.JobPostingRepository;
+import com.github.jingyangyu.swejobnotifier.scraper.JobScraper;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
-
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
-
-import com.github.jingyangyu.swejobnotifier.model.JobPosting;
-import com.github.jingyangyu.swejobnotifier.repository.JobPostingRepository;
-import com.github.jingyangyu.swejobnotifier.scraper.JobScraper;
-
-import lombok.extern.slf4j.Slf4j;
 
 /**
  * Scheduled polling orchestrator that runs every 15 minutes to scrape career sites, pre-filter and
@@ -74,9 +71,16 @@ public class JobPollingService {
                                     .filter(
                                             job ->
                                                     !repository.existsByCompanyAndExternalId(
-                                                            job.getCompany(),
-                                                            job.getExternalId()))
+                                                            job.getCompany(), job.getExternalId()))
                                     .toList();
+
+                    log.debug(
+                            "[{}] {} — {} scraped → {} after keyword filter → {} unseen",
+                            scraper.platform(),
+                            company,
+                            scraped.size(),
+                            filtered.size(),
+                            unseen.size());
 
                     if (unseen.isEmpty()) {
                         continue;
@@ -98,11 +102,7 @@ public class JobPollingService {
                             company,
                             classified.size());
                 } catch (Exception e) {
-                    log.error(
-                            "Error polling [{}] {}",
-                            scraper.platform(),
-                            company,
-                            e);
+                    log.error("Error polling [{}] {}", scraper.platform(), company, e);
                 }
             }
         }

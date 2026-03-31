@@ -1,8 +1,7 @@
 package com.github.jingyangyu.swejobnotifier.scraper;
 
-import java.util.List;
-
 import com.github.jingyangyu.swejobnotifier.model.JobPosting;
+import java.util.List;
 
 /**
  * Common interface for all career site scrapers. Each implementation targets a specific ATS

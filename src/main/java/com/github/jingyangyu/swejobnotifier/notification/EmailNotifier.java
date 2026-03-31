@@ -13,8 +13,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.MailException;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
-import org.springframework.retry.annotation.Backoff;
-import org.springframework.retry.annotation.Retryable;
+import org.springframework.retry.support.RetryTemplate;
 import org.springframework.stereotype.Component;
 
 /**
@@ -27,6 +26,7 @@ public class EmailNotifier {
     private final JavaMailSender mailSender;
     private final String toAddress;
     private final String fromAddress;
+    private final RetryTemplate retryTemplate;
 
     private static final DateTimeFormatter DATE_FMT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault());
@@ -38,6 +38,13 @@ public class EmailNotifier {
         this.mailSender = mailSender;
         this.toAddress = toAddress;
         this.fromAddress = fromAddress;
+        this.retryTemplate =
+                RetryTemplate.builder()
+                        .maxAttempts(3)
+                        .exponentialBackoff(2000, 2, 8000)
+                        .retryOn(MessagingException.class)
+                        .retryOn(MailException.class)
+                        .build();
     }
 
     /**
@@ -158,24 +165,29 @@ public class EmailNotifier {
     }
 
     /**
-     * Sends an HTML email with retry support for transient failures.
+     * Sends an HTML email with retry support for transient failures. Retries up to 3 times with
+     * exponential backoff (2s, 4s, 8s) on {@link MessagingException} and {@link MailException}.
      *
      * @param subject the email subject
      * @param htmlBody the HTML body content
      */
-    @Retryable(
-            retryFor = {MessagingException.class, MailException.class},
-            maxAttempts = 3,
-            backoff = @Backoff(delay = 2000, multiplier = 2))
-    public void sendHtmlEmail(String subject, String htmlBody) throws MessagingException {
-        MimeMessage message = mailSender.createMimeMessage();
-        MimeMessageHelper helper = new MimeMessageHelper(message, true);
-        helper.setFrom(fromAddress);
-        helper.setTo(toAddress);
-        helper.setSubject(subject);
-        helper.setText(htmlBody, true);
-        mailSender.send(message);
-        log.info("Email sent: {}", subject);
+    private void sendHtmlEmail(String subject, String htmlBody) throws Exception {
+        retryTemplate.execute(
+                context -> {
+                    if (context.getRetryCount() > 0) {
+                        log.warn(
+                                "Email retry attempt {} for: {}", context.getRetryCount(), subject);
+                    }
+                    MimeMessage message = mailSender.createMimeMessage();
+                    MimeMessageHelper helper = new MimeMessageHelper(message, true);
+                    helper.setFrom(fromAddress);
+                    helper.setTo(toAddress);
+                    helper.setSubject(subject);
+                    helper.setText(htmlBody, true);
+                    mailSender.send(message);
+                    log.info("Email sent: {}", subject);
+                    return null;
+                });
     }
 
     private static String escape(String text) {

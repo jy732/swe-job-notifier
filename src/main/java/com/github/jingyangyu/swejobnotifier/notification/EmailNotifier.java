@@ -55,19 +55,26 @@ public class EmailNotifier {
     public boolean sendNewJobAlert(List<JobPosting> newJobs) {
         if (newJobs.isEmpty() || toAddress.isBlank()) {
             if (toAddress.isBlank()) {
-                log.warn("Notification email not configured — skipping job alert");
+                log.warn(
+                        "Notification email not configured (toAddress blank) — skipping job alert");
             }
             return true;
         }
 
         String subject =
                 String.format("[Job Alert] %d new SWE II posting(s) detected", newJobs.size());
+        log.info("Preparing job alert email: to={}, subject={}", toAddress, subject);
         String body = buildAlertHtml(newJobs);
         try {
             sendHtmlEmail(subject, body);
+            log.info("Job alert email sent successfully to {}", toAddress);
             return true;
         } catch (Exception e) {
-            log.error("Failed to send job alert after retries: {}", e.getMessage(), e);
+            log.error(
+                    "Failed to send job alert email to {} after retries: {}",
+                    toAddress,
+                    e.getMessage(),
+                    e);
             return false;
         }
     }
@@ -79,9 +86,11 @@ public class EmailNotifier {
      */
     public boolean sendDailySummary(List<JobPosting> recentJobs) {
         if (toAddress.isBlank()) {
-            log.warn("Notification email not configured — skipping daily summary");
+            log.warn(
+                    "Notification email not configured (toAddress blank) — skipping daily summary");
             return false;
         }
+        log.info("Preparing daily summary email: to={}, jobs={}", toAddress, recentJobs.size());
 
         String subject;
         String body;
@@ -178,6 +187,7 @@ public class EmailNotifier {
                         log.warn(
                                 "Email retry attempt {} for: {}", context.getRetryCount(), subject);
                     }
+                    log.info("Connecting to SMTP server to send: {}", subject);
                     MimeMessage message = mailSender.createMimeMessage();
                     MimeMessageHelper helper = new MimeMessageHelper(message, true);
                     helper.setFrom(fromAddress);
@@ -185,7 +195,7 @@ public class EmailNotifier {
                     helper.setSubject(subject);
                     helper.setText(htmlBody, true);
                     mailSender.send(message);
-                    log.info("Email sent: {}", subject);
+                    log.info("Email SENT successfully: {}", subject);
                     return null;
                 });
     }

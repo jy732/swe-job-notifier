@@ -64,27 +64,51 @@ public class JobClassifier {
 
         if (apiKey == null || apiKey.isBlank()) {
             log.warn(
-                    "Gemini API key not configured — returning all pre-filtered jobs unclassified");
+                    "Gemini API key not configured — returning all {} pre-filtered jobs"
+                            + " unclassified",
+                    jobs.size());
             return jobs;
         }
 
+        int totalBatches = (int) Math.ceil((double) jobs.size() / BATCH_SIZE);
+        log.info("Gemini classification: {} job(s) in {} batch(es)", jobs.size(), totalBatches);
         List<JobPosting> classified = new ArrayList<>();
 
         for (int i = 0; i < jobs.size(); i += BATCH_SIZE) {
+            int batchNum = (i / BATCH_SIZE) + 1;
             if (i > 0) {
                 try {
-                    log.debug("Waiting {}ms before next Gemini batch", BATCH_DELAY_MS);
+                    log.info(
+                            "Waiting {}ms before Gemini batch {}/{}",
+                            BATCH_DELAY_MS,
+                            batchNum,
+                            totalBatches);
                     Thread.sleep(BATCH_DELAY_MS);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
+                    log.warn(
+                            "Gemini classification interrupted at batch {}/{}",
+                            batchNum,
+                            totalBatches);
                     break;
                 }
             }
             List<JobPosting> batch = jobs.subList(i, Math.min(i + BATCH_SIZE, jobs.size()));
             List<JobPosting> result = classifyBatch(batch);
             classified.addAll(result);
+            log.info(
+                    "Gemini batch {}/{}: {}/{} classified as mid-level (running total: {})",
+                    batchNum,
+                    totalBatches,
+                    result.size(),
+                    batch.size(),
+                    classified.size());
         }
 
+        log.info(
+                "Gemini classification complete: {}/{} total mid-level",
+                classified.size(),
+                jobs.size());
         return classified;
     }
 

@@ -29,10 +29,12 @@ public class DailySummaryService {
     /** Sends the daily summary email on the configured cron schedule. */
     @Scheduled(cron = "${job.summary.cron}")
     public void sendDailySummary() {
-        log.info("Starting daily summary job");
+        log.info("=== DAILY SUMMARY START ===");
         Instant since = Instant.now().minus(24, ChronoUnit.HOURS);
-        List<JobPosting> recentJobs = repository.findByDetectedAtAfterOrderByDetectedAtDesc(since);
-        List<JobPosting> unnotifiedJobs = repository.findByNotifiedFalseOrderByDetectedAtDesc();
+        List<JobPosting> recentJobs =
+                repository.findByMidLevelTrueAndDetectedAtAfterOrderByDetectedAtDesc(since);
+        List<JobPosting> unnotifiedJobs =
+                repository.findByMidLevelTrueAndNotifiedFalseOrderByDetectedAtDesc();
 
         // Merge both lists, dedup by id
         Set<Long> seen = new LinkedHashSet<>();

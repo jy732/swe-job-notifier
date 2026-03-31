@@ -27,19 +27,23 @@ public class NotificationService {
      */
     public void sendNewJobAlert(List<JobPosting> newJobs) {
         if (newJobs.isEmpty()) {
+            log.info("sendNewJobAlert called with empty list — nothing to do");
             return;
         }
 
+        log.info("Sending instant alert email for {} job(s)...", newJobs.size());
         boolean sent = emailNotifier.sendNewJobAlert(newJobs);
         if (sent) {
             for (JobPosting job : newJobs) {
                 job.setNotified(true);
                 repository.save(job);
             }
-            log.info("Instant alert sent and {} job(s) marked as notified", newJobs.size());
+            log.info(
+                    "Instant alert SENT successfully — {} job(s) marked as notified",
+                    newJobs.size());
         } else {
-            log.warn(
-                    "Instant alert failed — {} job(s) remain unnotified (will be caught by daily"
+            log.error(
+                    "Instant alert FAILED — {} job(s) remain unnotified (will be caught by daily"
                             + " summary)",
                     newJobs.size());
         }

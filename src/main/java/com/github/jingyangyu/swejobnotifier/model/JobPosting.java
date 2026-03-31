@@ -53,4 +53,9 @@ public class JobPosting {
     @Column(nullable = false)
     @Builder.Default
     private boolean notified = false;
+
+    /** Whether this job was classified as mid-level SWE by Gemini (Y). */
+    @Column(nullable = false, columnDefinition = "BOOLEAN DEFAULT TRUE")
+    @Builder.Default
+    private boolean midLevel = false;
 }

@@ -10,7 +10,7 @@ public interface JobPostingRepository extends JpaRepository<JobPosting, Long> {
 
     boolean existsByCompanyAndExternalId(String company, String externalId);
 
-    List<JobPosting> findByDetectedAtAfterOrderByDetectedAtDesc(Instant since);
+    List<JobPosting> findByMidLevelTrueAndDetectedAtAfterOrderByDetectedAtDesc(Instant since);
 
-    List<JobPosting> findByNotifiedFalseOrderByDetectedAtDesc();
+    List<JobPosting> findByMidLevelTrueAndNotifiedFalseOrderByDetectedAtDesc();
 }

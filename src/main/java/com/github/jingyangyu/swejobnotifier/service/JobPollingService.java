@@ -5,11 +5,10 @@ import com.github.jingyangyu.swejobnotifier.repository.JobPostingRepository;
 import com.github.jingyangyu.swejobnotifier.scraper.JobScraper;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
-import java.util.Locale;
+import java.util.Set;
+import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -25,98 +24,162 @@ public class JobPollingService {
     private final List<JobScraper> scrapers;
     private final JobPostingRepository repository;
     private final JobClassifier classifier;
+    private final JobTitleFilter titleFilter;
     private final NotificationService notificationService;
-    private final List<String> filterKeywords;
 
     public JobPollingService(
             List<JobScraper> scrapers,
             JobPostingRepository repository,
             JobClassifier classifier,
-            NotificationService notificationService,
-            @Value("${job.filter.keywords:engineer,developer,swe,sde}") String keywordsCsv) {
+            JobTitleFilter titleFilter,
+            NotificationService notificationService) {
         this.scrapers = scrapers;
         this.repository = repository;
         this.classifier = classifier;
+        this.titleFilter = titleFilter;
         this.notificationService = notificationService;
-        this.filterKeywords =
-                Arrays.stream(keywordsCsv.split(","))
-                        .map(String::trim)
-                        .map(s -> s.toLowerCase(Locale.ROOT))
-                        .toList();
     }
 
     /** Polls all configured scrapers on the configured cron schedule. */
     @Scheduled(cron = "${job.poll.cron}")
     public void poll() {
-        log.info("Starting job poll cycle");
+        log.info("=== POLL CYCLE START ===");
+        long startTime = System.currentTimeMillis();
         List<JobPosting> allNewJobs = new ArrayList<>();
+        int totalScraped = 0;
+        int totalUnseen = 0;
+        int totalAutoApproved = 0;
+        int totalSentToGemini = 0;
+        int companiesProcessed = 0;
 
         for (JobScraper scraper : scrapers) {
+            log.info(
+                    "Processing platform: {} ({} companies)",
+                    scraper.platform(),
+                    scraper.companies().size());
             for (String company : scraper.companies()) {
                 try {
                     List<JobPosting> scraped = scraper.scrape(company);
+                    totalScraped += scraped.size();
+
+                    // Tier 1: Exclude non-SWE / senior / intern titles
+                    List<JobPosting> afterExclude =
+                            scraped.stream()
+                                    .filter(job -> !titleFilter.shouldExclude(job))
+                                    .toList();
+
+                    // Tier 2 + 3: Must be SWE-relevant (role + title keyword match)
+                    List<JobPosting> sweRelevant =
+                            afterExclude.stream().filter(titleFilter::isSweRelevant).toList();
+
                     log.info(
-                            "[{}] {} — scraped {} job(s)",
+                            "[{}] {} — {} scraped → {} after exclude → {} SWE-relevant",
                             scraper.platform(),
                             company,
-                            scraped.size());
-
-                    // Pre-filter by keywords
-                    List<JobPosting> filtered =
-                            scraped.stream().filter(this::matchesKeywords).toList();
+                            scraped.size(),
+                            afterExclude.size(),
+                            sweRelevant.size());
 
                     // Dedup against DB
                     List<JobPosting> unseen =
-                            filtered.stream()
+                            sweRelevant.stream()
                                     .filter(
                                             job ->
                                                     !repository.existsByCompanyAndExternalId(
                                                             job.getCompany(), job.getExternalId()))
                                     .toList();
-
-                    log.debug(
-                            "[{}] {} — {} scraped → {} after keyword filter → {} unseen",
-                            scraper.platform(),
-                            company,
-                            scraped.size(),
-                            filtered.size(),
-                            unseen.size());
+                    totalUnseen += unseen.size();
 
                     if (unseen.isEmpty()) {
+                        log.info("[{}] {} — 0 unseen, skipping", scraper.platform(), company);
+                        companiesProcessed++;
                         continue;
                     }
 
-                    // Classify via Gemini
-                    List<JobPosting> classified = classifier.classify(unseen);
+                    // Tier 2: Auto-approve obvious mid-level titles
+                    List<JobPosting> autoApproved = new ArrayList<>();
+                    List<JobPosting> needsGemini = new ArrayList<>();
+                    for (JobPosting job : unseen) {
+                        if (titleFilter.isObviousMidLevel(job)) {
+                            autoApproved.add(job);
+                        } else {
+                            needsGemini.add(job);
+                        }
+                    }
+                    totalAutoApproved += autoApproved.size();
+                    totalSentToGemini += needsGemini.size();
 
-                    // Persist
-                    for (JobPosting job : classified) {
+                    log.info(
+                            "[{}] {} — {} unseen: {} auto-approved, {} need Gemini",
+                            scraper.platform(),
+                            company,
+                            unseen.size(),
+                            autoApproved.size(),
+                            needsGemini.size());
+
+                    // Tier 3: Classify ambiguous titles via Gemini
+                    List<JobPosting> geminiApproved = List.of();
+                    if (!needsGemini.isEmpty()) {
+                        geminiApproved = classifier.classify(needsGemini);
+                    }
+
+                    // Combine auto-approved + Gemini-approved
+                    List<JobPosting> allApproved = new ArrayList<>(autoApproved);
+                    allApproved.addAll(geminiApproved);
+
+                    // Persist ALL unseen jobs for dedup (mark approved ones as midLevel)
+                    Set<String> approvedIds =
+                            allApproved.stream()
+                                    .map(JobPosting::getExternalId)
+                                    .collect(Collectors.toSet());
+                    for (JobPosting job : unseen) {
                         job.setDetectedAt(Instant.now());
+                        job.setMidLevel(approvedIds.contains(job.getExternalId()));
                         repository.save(job);
                     }
 
-                    allNewJobs.addAll(classified);
+                    allNewJobs.addAll(allApproved);
+                    companiesProcessed++;
                     log.info(
-                            "[{}] {} — {} new classified job(s)",
+                            "[{}] {} — persisted {} job(s): {} mid-level ({} auto + {} Gemini),"
+                                    + " {} rejected",
                             scraper.platform(),
                             company,
-                            classified.size());
+                            unseen.size(),
+                            allApproved.size(),
+                            autoApproved.size(),
+                            geminiApproved.size(),
+                            unseen.size() - allApproved.size());
                 } catch (Exception e) {
-                    log.error("Error polling [{}] {}", scraper.platform(), company, e);
+                    log.error(
+                            "Error polling [{}] {} — skipping company",
+                            scraper.platform(),
+                            company,
+                            e);
+                    companiesProcessed++;
                 }
             }
         }
 
         // Send instant alert if new jobs found
         if (!allNewJobs.isEmpty()) {
+            log.info(
+                    "=== SENDING INSTANT ALERT for {} new mid-level job(s) ===", allNewJobs.size());
             notificationService.sendNewJobAlert(allNewJobs);
+        } else {
+            log.info("No new mid-level jobs found — skipping instant alert");
         }
 
-        log.info("Job poll cycle complete — {} new job(s) total", allNewJobs.size());
-    }
-
-    private boolean matchesKeywords(JobPosting job) {
-        String title = job.getTitle().toLowerCase(Locale.ROOT);
-        return filterKeywords.stream().anyMatch(title::contains);
+        long elapsed = System.currentTimeMillis() - startTime;
+        log.info(
+                "=== POLL CYCLE COMPLETE === companies={}, scraped={}, unseen={},"
+                        + " autoApproved={}, sentToGemini={}, newMidLevel={}, elapsed={}s",
+                companiesProcessed,
+                totalScraped,
+                totalUnseen,
+                totalAutoApproved,
+                totalSentToGemini,
+                allNewJobs.size(),
+                elapsed / 1000);
     }
 }

@@ -32,19 +32,16 @@ public class JobPollingService {
     private final JobPostingRepository repository;
     private final JobClassifier classifier;
     private final JobTitleFilter titleFilter;
-    private final NotificationService notificationService;
 
     public JobPollingService(
             List<JobScraper> scrapers,
             JobPostingRepository repository,
             JobClassifier classifier,
-            JobTitleFilter titleFilter,
-            NotificationService notificationService) {
+            JobTitleFilter titleFilter) {
         this.scrapers = scrapers;
         this.repository = repository;
         this.classifier = classifier;
         this.titleFilter = titleFilter;
-        this.notificationService = notificationService;
     }
 
     /** Result of processing jobs for a single company. */
@@ -111,15 +108,6 @@ public class JobPollingService {
                     companiesProcessed++;
                 }
             }
-        }
-
-        // Send instant alert if new jobs found
-        if (!allNewJobs.isEmpty()) {
-            log.info(
-                    "=== SENDING INSTANT ALERT for {} new mid-level job(s) ===", allNewJobs.size());
-            notificationService.sendNewJobAlert(allNewJobs);
-        } else {
-            log.info("No new mid-level jobs found — skipping instant alert");
         }
 
         long elapsed = System.currentTimeMillis() - startTime;

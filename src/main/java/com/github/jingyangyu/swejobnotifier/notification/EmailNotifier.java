@@ -59,11 +59,11 @@ public class EmailNotifier {
      * @return true if email was sent successfully, false otherwise
      */
     public boolean sendNewJobAlert(List<JobPosting> newJobs) {
-        if (newJobs.isEmpty() || toAddress.isBlank()) {
-            if (toAddress.isBlank()) {
-                log.warn(
-                        "Notification email not configured (toAddress blank) — skipping job alert");
-            }
+        if (toAddress.isBlank()) {
+            log.warn("Notification email not configured (toAddress blank) — skipping job alert");
+            return false;
+        }
+        if (newJobs.isEmpty()) {
             return true;
         }
 

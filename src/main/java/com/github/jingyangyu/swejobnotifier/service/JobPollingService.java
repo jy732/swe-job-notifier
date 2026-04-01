@@ -68,16 +68,23 @@ public class JobPollingService {
                                     .filter(job -> !titleFilter.shouldExclude(job))
                                     .toList();
 
+                    // Tier 1.5: Filter to US locations only
+                    List<JobPosting> usLocationJobs =
+                            afterExclude.stream()
+                                    .filter(titleFilter::isValidUsLocation)
+                                    .toList();
+
                     // Tier 2 + 3: Must be SWE-relevant (role + title keyword match)
                     List<JobPosting> sweRelevant =
-                            afterExclude.stream().filter(titleFilter::isSweRelevant).toList();
+                            usLocationJobs.stream().filter(titleFilter::isSweRelevant).toList();
 
                     log.info(
-                            "[{}] {} — {} scraped → {} after exclude → {} SWE-relevant",
+                            "[{}] {} — {} scraped → {} after exclude → {} US location → {} SWE-relevant",
                             scraper.platform(),
                             company,
                             scraped.size(),
                             afterExclude.size(),
+                            usLocationJobs.size(),
                             sweRelevant.size());
 
                     // Dedup against DB

@@ -126,7 +126,7 @@ public class EmailNotifier {
             sb.append("<tr>");
             sb.append("<td>").append(escape(job.getCompany())).append("</td>");
             sb.append("<td>").append(escape(job.getTitle())).append("</td>");
-            sb.append("<td>").append(escape(job.getLocation())).append("</td>");
+            sb.append("<td>").append(formatLocation(job.getLocation())).append("</td>");
             sb.append("<td><a href='").append(escape(job.getUrl())).append("'>Apply</a></td>");
             sb.append("</tr>");
         }
@@ -159,7 +159,7 @@ public class EmailNotifier {
                     for (JobPosting job : postings) {
                         sb.append("<tr>");
                         sb.append("<td>").append(escape(job.getTitle())).append("</td>");
-                        sb.append("<td>").append(escape(job.getLocation())).append("</td>");
+                        sb.append("<td>").append(formatLocation(job.getLocation())).append("</td>");
                         sb.append("<td>")
                                 .append(DATE_FMT.format(job.getDetectedAt()))
                                 .append("</td>");
@@ -208,5 +208,17 @@ public class EmailNotifier {
                 .replace("<", "&lt;")
                 .replace(">", "&gt;")
                 .replace("\"", "&quot;");
+    }
+
+    private static String formatLocation(String location) {
+        if (location == null || location.isBlank()) {
+            return "";
+        }
+        // Remote positions
+        if (location.toLowerCase().contains("remote")) {
+            return "Remote";
+        }
+        // US locations: extract city, state (format: "City, ST" or "City, State")
+        return escape(location);
     }
 }

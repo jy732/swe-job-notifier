@@ -40,7 +40,12 @@ public class JobTitleFilter {
                     "co-op",
                     "university",
                     "graduate",
-                    "college");
+                    "college",
+                    "frontend",
+                    "front-end",
+                    "mobile",
+                    "ios",
+                    "android");
 
     // ── Tier 2: Auto-approve obvious mid-level SWE titles ──
     // Matches: "Software Engineer II", "SDE II", "SWE 2", "Backend Developer II", etc.
@@ -67,6 +72,14 @@ public class JobTitleFilter {
 
     private static final List<String> TITLE_KEYWORDS = List.of("engineer", "developer", "eng");
 
+    // ── US States: Two-letter abbreviations for location validation ──
+    private static final List<String> US_STATE_ABBREVIATIONS =
+            List.of(
+                    "al", "ak", "az", "ar", "ca", "co", "ct", "de", "fl", "ga", "hi", "id", "il",
+                    "in", "ia", "ks", "ky", "la", "me", "md", "ma", "mi", "mn", "ms", "mo", "mt",
+                    "ne", "nv", "nh", "nj", "nm", "ny", "nc", "nd", "oh", "ok", "or", "pa", "ri",
+                    "sc", "sd", "tn", "tx", "ut", "vt", "va", "wa", "wv", "wi", "wy", "dc");
+
     /** Tier 1: Returns true if the title should be excluded (senior/staff/intern/manager etc.). */
     public boolean shouldExclude(JobPosting job) {
         String title = job.getTitle().toLowerCase(Locale.ROOT);
@@ -86,5 +99,44 @@ public class JobTitleFilter {
         boolean hasRole = ROLE_KEYWORDS.stream().anyMatch(title::contains);
         boolean hasTitle = TITLE_KEYWORDS.stream().anyMatch(title::contains);
         return hasRole && hasTitle;
+    }
+
+    /**
+     * Tier 1.5: Returns true if location is valid (US-based or Remote). Returns false for non-US
+     * locations.
+     */
+    public boolean isValidUsLocation(JobPosting job) {
+        String location = job.getLocation();
+        if (location == null || location.isBlank()) {
+            return false;
+        }
+
+        String loc = location.toLowerCase(Locale.ROOT);
+
+        // Accept remote
+        if (loc.contains("remote")) {
+            return true;
+        }
+
+        // Check for US state abbreviation (format: "City, ST")
+        for (String state : US_STATE_ABBREVIATIONS) {
+            if (loc.contains(", " + state) || loc.endsWith(state)) {
+                return true;
+            }
+        }
+
+        // Reject if it contains non-US country names
+        String[] nonUsCountries = {
+            "uk", "united kingdom", "canada", "germany", "france", "india", "australia",
+            "japan", "singapore", "ireland", "mexico", "brazil", "china", "israel"
+        };
+        for (String country : nonUsCountries) {
+            if (loc.contains(country)) {
+                return false;
+            }
+        }
+
+        // If no US state found and no country detected, assume non-US (be conservative)
+        return false;
     }
 }

@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
@@ -51,15 +52,15 @@ public class JobClassifier {
     }
 
     /**
-     * Classifies a list of job postings, returning only those classified as mid-level SWE. If the
-     * Gemini API key is missing, returns all jobs unclassified.
+     * Classifies a list of job postings, returning approved jobs and failed (unprocessed) jobs
+     * separately so the caller can decide what to persist.
      *
      * @param jobs the pre-filtered job postings to classify
-     * @return list of jobs classified as mid-level SWE II
+     * @return result containing approved mid-level jobs and jobs that failed classification
      */
-    public List<JobPosting> classify(List<JobPosting> jobs) {
+    public ClassificationResult classify(List<JobPosting> jobs) {
         if (jobs.isEmpty()) {
-            return Collections.emptyList();
+            return new ClassificationResult(Collections.emptyList(), Collections.emptyList());
         }
 
         if (apiKey == null || apiKey.isBlank()) {
@@ -67,12 +68,13 @@ public class JobClassifier {
                     "Gemini API key not configured — returning all {} pre-filtered jobs"
                             + " unclassified",
                     jobs.size());
-            return jobs;
+            return new ClassificationResult(jobs, Collections.emptyList());
         }
 
         int totalBatches = (int) Math.ceil((double) jobs.size() / BATCH_SIZE);
         log.info("Gemini classification: {} job(s) in {} batch(es)", jobs.size(), totalBatches);
         List<JobPosting> classified = new ArrayList<>();
+        List<JobPosting> failed = new ArrayList<>();
 
         for (int i = 0; i < jobs.size(); i += BATCH_SIZE) {
             int batchNum = (i / BATCH_SIZE) + 1;
@@ -90,26 +92,51 @@ public class JobClassifier {
                             "Gemini classification interrupted at batch {}/{}",
                             batchNum,
                             totalBatches);
+                    // Add remaining jobs as failed
+                    failed.addAll(jobs.subList(i, jobs.size()));
                     break;
                 }
             }
             List<JobPosting> batch = jobs.subList(i, Math.min(i + BATCH_SIZE, jobs.size()));
             List<JobPosting> result = classifyBatch(batch);
-            classified.addAll(result);
-            log.info(
-                    "Gemini batch {}/{}: {}/{} classified as mid-level (running total: {})",
-                    batchNum,
-                    totalBatches,
-                    result.size(),
-                    batch.size(),
-                    classified.size());
+            if (result == null) {
+                // Batch failed — don't persist, retry next poll
+                failed.addAll(batch);
+                log.warn(
+                        "Gemini batch {}/{} failed — {} job(s) will retry next poll",
+                        batchNum,
+                        totalBatches,
+                        batch.size());
+            } else {
+                classified.addAll(result);
+                log.info(
+                        "Gemini batch {}/{}: {}/{} classified as mid-level (running total: {})",
+                        batchNum,
+                        totalBatches,
+                        result.size(),
+                        batch.size(),
+                        classified.size());
+            }
         }
 
         log.info(
-                "Gemini classification complete: {}/{} total mid-level",
+                "Gemini classification complete: {}/{} mid-level, {} failed",
                 classified.size(),
-                jobs.size());
-        return classified;
+                jobs.size(),
+                failed.size());
+        return new ClassificationResult(classified, failed);
+    }
+
+    /** Result of Gemini classification, separating approved jobs from failed (unprocessed) ones. */
+    @Getter
+    public static class ClassificationResult {
+        private final List<JobPosting> approved;
+        private final List<JobPosting> failed;
+
+        public ClassificationResult(List<JobPosting> approved, List<JobPosting> failed) {
+            this.approved = approved;
+            this.failed = failed;
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -167,7 +194,7 @@ public class JobClassifier {
                     "Gemini classification failed after retries, skipping batch of {}",
                     batch.size(),
                     e);
-            return Collections.emptyList();
+            return null; // null signals failure (vs empty = none matched)
         }
     }
 

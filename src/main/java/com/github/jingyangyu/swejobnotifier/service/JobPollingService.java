@@ -119,37 +119,51 @@ public class JobPollingService {
 
                     // Tier 3: Classify ambiguous titles via Gemini
                     List<JobPosting> geminiApproved = List.of();
+                    List<JobPosting> geminiFailed = List.of();
                     if (!needsGemini.isEmpty()) {
-                        geminiApproved = classifier.classify(needsGemini);
+                        JobClassifier.ClassificationResult result =
+                                classifier.classify(needsGemini);
+                        geminiApproved = result.getApproved();
+                        geminiFailed = result.getFailed();
                     }
 
                     // Combine auto-approved + Gemini-approved
                     List<JobPosting> allApproved = new ArrayList<>(autoApproved);
                     allApproved.addAll(geminiApproved);
 
-                    // Persist ALL unseen jobs for dedup (mark approved ones as midLevel)
+                    // Persist processed jobs for dedup (skip failed — retry next poll)
                     Set<String> approvedIds =
                             allApproved.stream()
                                     .map(JobPosting::getExternalId)
                                     .collect(Collectors.toSet());
+                    Set<String> failedIds =
+                            geminiFailed.stream()
+                                    .map(JobPosting::getExternalId)
+                                    .collect(Collectors.toSet());
+                    int persisted = 0;
                     for (JobPosting job : unseen) {
+                        if (failedIds.contains(job.getExternalId())) {
+                            continue; // don't persist — will retry next poll
+                        }
                         job.setDetectedAt(Instant.now());
                         job.setMidLevel(approvedIds.contains(job.getExternalId()));
                         repository.save(job);
+                        persisted++;
                     }
 
                     allNewJobs.addAll(allApproved);
                     companiesProcessed++;
                     log.info(
-                            "[{}] {} — persisted {} job(s): {} mid-level ({} auto + {} Gemini),"
-                                    + " {} rejected",
+                            "[{}] {} — persisted {}, skipped {} failed: {} mid-level"
+                                    + " ({} auto + {} Gemini), {} rejected",
                             scraper.platform(),
                             company,
-                            unseen.size(),
+                            persisted,
+                            geminiFailed.size(),
                             allApproved.size(),
                             autoApproved.size(),
                             geminiApproved.size(),
-                            unseen.size() - allApproved.size());
+                            persisted - allApproved.size());
                 } catch (Exception e) {
                     log.error(
                             "Error polling [{}] {} — skipping company",

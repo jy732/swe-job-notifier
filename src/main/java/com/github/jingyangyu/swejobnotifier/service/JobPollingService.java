@@ -212,7 +212,7 @@ public class JobPollingService {
         List<JobPosting> geminiApproved = List.of();
         List<JobPosting> geminiFailed = List.of();
         if (!needsGemini.isEmpty()) {
-            JobClassifier.ClassificationResult result = classifier.classify(needsGemini);
+            ClassificationResult result = classifier.classify(needsGemini);
             geminiApproved = result.getApproved();
             geminiFailed = result.getFailed();
         }

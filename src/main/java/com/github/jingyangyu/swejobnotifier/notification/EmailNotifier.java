@@ -51,6 +51,15 @@ public class EmailNotifier {
                         .retryOn(MessagingException.class)
                         .retryOn(MailException.class)
                         .build();
+
+        if (toAddress.isBlank() || fromAddress.isBlank()) {
+            log.error("██ EMAIL NOT CONFIGURED ██ "
+                    + "toAddress={}, fromAddress={} — alerts will NOT be sent until fixed",
+                    toAddress.isBlank() ? "<MISSING>" : toAddress,
+                    fromAddress.isBlank() ? "<MISSING>" : fromAddress);
+        } else {
+            log.info("Email configured: from={}, to={}", fromAddress, toAddress);
+        }
     }
 
     /**
@@ -60,7 +69,7 @@ public class EmailNotifier {
      */
     public boolean sendNewJobAlert(List<JobPosting> newJobs) {
         if (toAddress.isBlank()) {
-            log.warn("Notification email not configured (toAddress blank) — skipping job alert");
+            log.error("EMAIL NOT CONFIGURED — {} job(s) will NOT be sent", newJobs.size());
             return false;
         }
         if (newJobs.isEmpty()) {
@@ -92,7 +101,7 @@ public class EmailNotifier {
      */
     public boolean sendDailySummary(List<JobPosting> recentJobs) {
         if (toAddress.isBlank()) {
-            log.warn(
+            log.error(
                     "Notification email not configured (toAddress blank) — skipping daily summary");
             return false;
         }

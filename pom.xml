@@ -56,13 +56,6 @@
             <scope>runtime</scope>
         </dependency>
 
-        <!-- .env file support -->
-        <dependency>
-            <groupId>me.paulschwarz</groupId>
-            <artifactId>spring-dotenv</artifactId>
-            <version>4.0.0</version>
-        </dependency>
-
         <!-- Code generation -->
         <dependency>
             <groupId>org.projectlombok</groupId>

@@ -49,6 +49,13 @@ public class GeminiClient {
         this.webClient = webClientBuilder.build();
         this.apiKey = apiKey;
         this.model = model;
+
+        if (apiKey == null || apiKey.isBlank()) {
+            log.error("██ GEMINI API KEY NOT CONFIGURED ██ "
+                    + "— all jobs will bypass classification (no filtering by level)");
+        } else {
+            log.info("Gemini configured: model={}", model);
+        }
     }
 
     /** Returns true if the Gemini API key is configured and non-blank. */

@@ -102,13 +102,13 @@ public class JobTitleFilter {
     }
 
     /**
-     * Tier 1.5: Returns true if location is valid (US-based or Remote). Returns false for non-US
-     * locations.
+     * Tier 1.5: Returns true if location is valid (US-based or Remote). Returns false only for
+     * locations definitively outside the US.
      */
     public boolean isValidUsLocation(JobPosting job) {
         String location = job.getLocation();
         if (location == null || location.isBlank()) {
-            return false;
+            return true; // Unknown location — accept to avoid false negatives
         }
 
         String loc = location.toLowerCase(Locale.ROOT);
@@ -125,7 +125,7 @@ public class JobTitleFilter {
             }
         }
 
-        // Reject if it contains non-US country names
+        // Reject only if it contains non-US country names (be strict about rejection)
         String[] nonUsCountries = {
             "uk", "united kingdom", "canada", "germany", "france", "india", "australia",
             "japan", "singapore", "ireland", "mexico", "brazil", "china", "israel"
@@ -136,7 +136,7 @@ public class JobTitleFilter {
             }
         }
 
-        // If no US state found and no country detected, assume non-US (be conservative)
-        return false;
+        // If no country detected and no US state found, accept it (avoid false negatives)
+        return true;
     }
 }

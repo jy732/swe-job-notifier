@@ -4,6 +4,8 @@ import com.github.jingyangyu.swejobnotifier.model.JobPosting;
 import java.time.Instant;
 import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
 
 /** Spring Data JPA repository for {@link JobPosting} entities. */
 public interface JobPostingRepository extends JpaRepository<JobPosting, Long> {
@@ -13,4 +15,8 @@ public interface JobPostingRepository extends JpaRepository<JobPosting, Long> {
     List<JobPosting> findByMidLevelTrueAndDetectedAtAfterOrderByDetectedAtDesc(Instant since);
 
     List<JobPosting> findByMidLevelTrueAndNotifiedFalseOrderByDetectedAtDesc();
+
+    @Modifying
+    @Query("DELETE FROM JobPosting jp WHERE jp.postedDate < ?1")
+    int deleteByPostedDateBefore(Instant cutoff);
 }

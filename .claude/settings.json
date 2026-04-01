@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(source /Users/yujingyang/IdeaProjects/swe-job-notifier/.env)",
+      "Bash(ls -la /Users/yujingyang/IdeaProjects/swe-job-notifier/*.log)",
+      "Read(//private/var/folders/h3/q5bcjs796wdf_9djt_fqfh9c0000gn/T/**)",
+      "Bash(ls /var/folders/h3/q5bcjs796wdf_9djt_fqfh9c0000gn/T/claude-*)",
+      "Read(//private/tmp/**)",
+      "Bash(ls /tmp/claude-5265-*)",
+      "Bash(ls /tmp/claude-*-bg-*)",
+      "Bash(kill 69220 69157)",
+      "Bash(ps -p 69220 -o pid=)",
+      "Bash(kill -9 69220 69157)",
+      "Bash(pkill -f \"spring-boot:run\")",
+      "Bash(pkill -f SweJobNotifierApplication)",
+      "Bash(mvn spotless:apply compile -q)",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\" -X POST \"https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$GEMINI_API_KEY\" -H \"Content-Type: application/json\" -d '{\"\"contents\"\":[{\"\"role\"\":\"\"user\"\",\"\"parts\"\":[{\"\"text\"\":\"\"Say hi\"\"}]}]}')",
+      "Bash(curl -s -w \"\\\\nHTTP %{http_code}\" -X POST \"https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$GEMINI_API_KEY\" -H \"Content-Type: application/json\" -d '{\"\"\"\"contents\"\"\"\":[{\"\"\"\"role\"\"\"\":\"\"\"\"user\"\"\"\",\"\"\"\"parts\"\"\"\":[{\"\"\"\"text\"\"\"\":\"\"\"\"Say hi\"\"\"\"}]}]}')",
+      "Bash(curl -s -X POST \"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=$GEMINI_API_KEY\" -H \"Content-Type: application/json\" -d '{\"\"\"\"contents\"\"\"\":[{\"\"\"\"role\"\"\"\":\"\"\"\"user\"\"\"\",\"\"\"\"parts\"\"\"\":[{\"\"\"\"text\"\"\"\":\"\"\"\"Say hi\"\"\"\"}]}]}')",
+      "Bash(curl -s -X POST \"https://generativelanguage.googleapis.com/v1beta/models/gemma-3-27b-it:generateContent?key=$GEMINI_API_KEY\" -H \"Content-Type: application/json\" -d '{\"\"\"\"contents\"\"\"\":[{\"\"\"\"role\"\"\"\":\"\"\"\"user\"\"\"\",\"\"\"\"parts\"\"\"\":[{\"\"\"\"text\"\"\"\":\"\"\"\"Classify: Y or N. Is Software Engineer II a mid-level role? Reply with just Y or N.\"\"\"\"}]}]}')",
+      "Bash(curl -s -X POST \"https://generativelanguage.googleapis.com/v1beta/models/gemma-3-27b-it:generateContent?key=$GEMINI_API_KEY\" -H \"Content-Type: application/json\" -d '{\"\"\"\"system_instruction\"\"\"\":{\"\"\"\"parts\"\"\"\":[{\"\"\"\"text\"\"\"\":\"\"\"\"Reply Y or N only\"\"\"\"}]},\"\"\"\"contents\"\"\"\":[{\"\"\"\"role\"\"\"\":\"\"\"\"user\"\"\"\",\"\"\"\"parts\"\"\"\":[{\"\"\"\"text\"\"\"\":\"\"\"\"Is the sky blue?\"\"\"\"}]}]}')",
+      "Bash(curl -s -X POST \"https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$GEMINI_API_KEY\" -H \"Content-Type: application/json\" -d '{\"\"\"\"system_instruction\"\"\"\":{\"\"\"\"parts\"\"\"\":[{\"\"\"\"text\"\"\"\":\"\"\"\"Reply Y or N\"\"\"\"}]},\"\"\"\"contents\"\"\"\":[{\"\"\"\"role\"\"\"\":\"\"\"\"user\"\"\"\",\"\"\"\"parts\"\"\"\":[{\"\"\"\"text\"\"\"\":\"\"\"\"Is the sky blue?\"\"\"\"}]}]}')",
+      "Bash(timeout 5 curl -s -X POST \"https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$GEMINI_API_KEY\" -H \"Content-Type: application/json\" -d '{\"\"\"\"system_instruction\"\"\"\":{\"\"\"\"parts\"\"\"\":[{\"\"\"\"text\"\"\"\":\"\"\"\"Reply Y or N\"\"\"\"}]},\"\"\"\"contents\"\"\"\":[{\"\"\"\"role\"\"\"\":\"\"\"\"user\"\"\"\",\"\"\"\"parts\"\"\"\":[{\"\"\"\"text\"\"\"\":\"\"\"\"Is sky blue?\"\"\"\"}]}]}')",
+      "Bash(grep -v \"^$\")",
+      "Bash(curl -s -X POST \"https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$GEMINI_API_KEY\" -H \"Content-Type: application/json\" -d '{\"\"\"\"system_instruction\"\"\"\":{\"\"\"\"parts\"\"\"\":[{\"\"\"\"text\"\"\"\":\"\"\"\"Reply Y or N only\"\"\"\"}]},\"\"\"\"contents\"\"\"\":[{\"\"\"\"role\"\"\"\":\"\"\"\"user\"\"\"\",\"\"\"\"parts\"\"\"\":[{\"\"\"\"text\"\"\"\":\"\"\"\"Is sky blue?\"\"\"\"}]}]}')",
+      "Bash(curl -s -X POST \"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$GEMINI_API_KEY\" -H \"Content-Type: application/json\" -d '{\"\"\"\"system_instruction\"\"\"\":{\"\"\"\"parts\"\"\"\":[{\"\"\"\"text\"\"\"\":\"\"\"\"Reply Y or N only\"\"\"\"}]},\"\"\"\"contents\"\"\"\":[{\"\"\"\"role\"\"\"\":\"\"\"\"user\"\"\"\",\"\"\"\"parts\"\"\"\":[{\"\"\"\"text\"\"\"\":\"\"\"\"Is sky blue?\"\"\"\"}]}]}')",
+      "Bash(python3 -c \"import sys,json; [print\\(m[''''name''''].split\\(''''/''''\\)[-1]\\) for m in json.load\\(sys.stdin\\).get\\(''''models'''',[]\\)]\")"
+    ]
+  }
+}

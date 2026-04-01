@@ -1,9 +1,12 @@
 package com.github.jingyangyu.swejobnotifier.service;
 
 import com.github.jingyangyu.swejobnotifier.model.JobPosting;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Pattern;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
@@ -18,6 +21,12 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class JobTitleFilter {
+
+    private final int retentionDays;
+
+    public JobTitleFilter(@Value("${job.retention.days:90}") int retentionDays) {
+        this.retentionDays = retentionDays;
+    }
 
     // ── Tier 1: Exclude these titles immediately ──
     private static final List<String> EXCLUDE_KEYWORDS =
@@ -79,6 +88,18 @@ public class JobTitleFilter {
                     "in", "ia", "ks", "ky", "la", "me", "md", "ma", "mi", "mn", "ms", "mo", "mt",
                     "ne", "nv", "nh", "nj", "nm", "ny", "nc", "nd", "oh", "ok", "or", "pa", "ri",
                     "sc", "sd", "tn", "tx", "ut", "vt", "va", "wa", "wv", "wi", "wy", "dc");
+
+    /**
+     * Tier 0: Returns true if the job is fresh enough (posted within retention period). Filters out
+     * stale jobs older than the configured retention days.
+     */
+    public boolean isFresh(JobPosting job) {
+        if (job.getPostedDate() == null) {
+            return true; // Unknown posted date — accept to avoid false negatives
+        }
+        Instant cutoff = Instant.now().minus(retentionDays, ChronoUnit.DAYS);
+        return job.getPostedDate().isAfter(cutoff);
+    }
 
     /** Tier 1: Returns true if the title should be excluded (senior/staff/intern/manager etc.). */
     public boolean shouldExclude(JobPosting job) {

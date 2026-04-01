@@ -62,9 +62,13 @@ public class JobPollingService {
                     List<JobPosting> scraped = scraper.scrape(company);
                     totalScraped += scraped.size();
 
+                    // Tier 0: Filter out stale jobs (posted more than retention period ago)
+                    List<JobPosting> fresh =
+                            scraped.stream().filter(titleFilter::isFresh).toList();
+
                     // Tier 1: Exclude non-SWE / senior / intern titles
                     List<JobPosting> afterExclude =
-                            scraped.stream()
+                            fresh.stream()
                                     .filter(job -> !titleFilter.shouldExclude(job))
                                     .toList();
 
@@ -79,10 +83,11 @@ public class JobPollingService {
                             usLocationJobs.stream().filter(titleFilter::isSweRelevant).toList();
 
                     log.info(
-                            "[{}] {} — {} scraped → {} after exclude → {} US location → {} SWE-relevant",
+                            "[{}] {} — {} scraped → {} fresh → {} after exclude → {} US location → {} SWE-relevant",
                             scraper.platform(),
                             company,
                             scraped.size(),
+                            fresh.size(),
                             afterExclude.size(),
                             usLocationJobs.size(),
                             sweRelevant.size());

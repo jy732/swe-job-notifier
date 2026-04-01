@@ -18,6 +18,12 @@ import org.springframework.stereotype.Component;
 
 /**
  * Sends HTML email notifications for job alerts and daily summaries via Spring Mail (Gmail SMTP).
+ *
+ * <p>Both {@code sendNewJobAlert} and {@code sendDailySummary} return a boolean indicating success.
+ * Callers use this to decide whether to mark jobs as notified — if the email fails, jobs stay
+ * {@code notified=false} so the daily summary safety net can retry.
+ *
+ * <p>Retries up to 3 times with exponential backoff (2s → 4s → 8s) on SMTP failures.
  */
 @Slf4j
 @Component
@@ -134,6 +140,7 @@ public class EmailNotifier {
         return sb.toString();
     }
 
+    /** Builds the daily summary HTML, grouping jobs by company for easier scanning. */
     private String buildSummaryHtml(List<JobPosting> jobs) {
         Map<String, List<JobPosting>> byCompany =
                 jobs.stream().collect(Collectors.groupingBy(JobPosting::getCompany));
@@ -210,15 +217,18 @@ public class EmailNotifier {
                 .replace("\"", "&quot;");
     }
 
+    /**
+     * Formats a job location for email display. Normalizes "Remote" variants (e.g. "Remote, US",
+     * "Remote - San Francisco") to a simple "Remote" label. All other locations are displayed as-is
+     * since the location filter already ensures they are US-based.
+     */
     private static String formatLocation(String location) {
         if (location == null || location.isBlank()) {
             return "";
         }
-        // Remote positions
         if (location.toLowerCase().contains("remote")) {
             return "Remote";
         }
-        // US locations: extract city, state (format: "City, ST" or "City, State")
         return escape(location);
     }
 }

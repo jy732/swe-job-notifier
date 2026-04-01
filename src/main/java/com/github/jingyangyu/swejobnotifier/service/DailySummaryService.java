@@ -15,8 +15,19 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 /**
- * Sends a daily summary email at 8 AM containing all jobs detected in the last 24 hours plus any
- * other jobs that were never successfully notified (safety net for failed alerts).
+ * Sends a daily summary email at 8 AM ({@code job.summary.cron}).
+ *
+ * <p>Includes two sources of jobs:
+ *
+ * <ol>
+ *   <li>Jobs detected in the last 24 hours (the normal daily digest).
+ *   <li>Any older jobs where {@code notified=false} — these are jobs whose instant alert failed
+ *       (e.g. SMTP error) and haven't been included in a successful summary yet. This acts as a
+ *       safety net so no approved job is ever silently lost.
+ * </ol>
+ *
+ * <p>Jobs are only marked as {@code notified=true} after the summary email is successfully sent.
+ * If the email fails, they remain unnotified and will be retried in the next daily summary.
  */
 @Slf4j
 @Service
@@ -36,7 +47,8 @@ public class DailySummaryService {
         List<JobPosting> unnotifiedJobs =
                 repository.findByMidLevelTrueAndNotifiedFalseOrderByDetectedAtDesc();
 
-        // Merge both lists, dedup by id
+        // Merge both queries and dedup by id — a job may appear in both lists
+        // (e.g. detected today AND unnotified from a failed instant alert)
         Set<Long> seen = new LinkedHashSet<>();
         List<JobPosting> allJobs = new ArrayList<>();
         for (JobPosting job : recentJobs) {

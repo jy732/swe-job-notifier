@@ -48,6 +48,17 @@ public class WorkdayScraper implements JobScraper {
         return properties.getCompanies().stream().map(WorkdayCompany::getName).toList();
     }
 
+    /**
+     * Scrapes all job postings for a Workday company via paginated API calls.
+     *
+     * <p>Workday's CXS API returns jobs in pages of {@value #PAGE_SIZE}. We iterate until
+     * {@code offset >= total}. On failure mid-pagination, we return partial results rather than
+     * nothing — better to process some jobs than lose an entire company's listings.
+     *
+     * <p>Note: Workday does not provide a posted date in the search results, so {@code postedDate}
+     * is always null for Workday jobs. This means the freshness filter (Tier 0) will accept all
+     * Workday jobs.
+     */
     @Override
     public List<JobPosting> scrape(String company) {
         Optional<WorkdayCompany> configOpt = properties.findByName(company);
@@ -86,7 +97,7 @@ public class WorkdayScraper implements JobScraper {
             return allJobs;
         } catch (Exception e) {
             log.error("Failed to scrape Workday for company: {}", company, e);
-            return allJobs; // return whatever we got so far
+            return allJobs; // Return partial results — better than losing everything
         }
     }
 
@@ -127,9 +138,15 @@ public class WorkdayScraper implements JobScraper {
                 .build();
     }
 
+    /**
+     * Fetches the full job description from Workday's detail endpoint. Returns empty string on any
+     * failure — a missing description is acceptable since the title filter and Gemini can still
+     * classify based on title alone.
+     */
     @SuppressWarnings("unchecked")
     private String fetchJobDescription(WorkdayCompany config, String externalPath) {
         try {
+            // Detail URL: {baseUrl}/wday/cxs/{subdomain}/{site}{externalPath}
             String detailUrl =
                     String.format(
                             "%s/wday/cxs/%s/%s%s",

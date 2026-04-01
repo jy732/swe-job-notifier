@@ -57,51 +57,39 @@ public class LeverScraper implements JobScraper {
                 return Collections.emptyList();
             }
 
-            return postings.stream()
-                    .map(
-                            posting -> {
-                                String location = "";
-                                Object categories = posting.get("categories");
-                                if (categories instanceof Map<?, ?> catMap) {
-                                    Object loc = catMap.get("location");
-                                    if (loc != null) {
-                                        location = loc.toString();
-                                    }
-                                }
-
-                                Instant postedDate = null;
-                                Object createdAt = posting.get("createdAt");
-                                if (createdAt instanceof Number num) {
-                                    postedDate = Instant.ofEpochMilli(num.longValue());
-                                }
-
-                                return JobPosting.builder()
-                                        .company(company)
-                                        .externalId(
-                                                posting.get("id") != null
-                                                        ? posting.get("id").toString()
-                                                        : "")
-                                        .title(
-                                                posting.get("text") != null
-                                                        ? posting.get("text").toString()
-                                                        : "")
-                                        .url(
-                                                posting.get("hostedUrl") != null
-                                                        ? posting.get("hostedUrl").toString()
-                                                        : "")
-                                        .location(location)
-                                        .description(
-                                                posting.get("descriptionPlain") != null
-                                                        ? posting.get("descriptionPlain").toString()
-                                                        : "")
-                                        .postedDate(postedDate)
-                                        .detectedAt(Instant.now())
-                                        .build();
-                            })
-                    .toList();
+            return postings.stream().map(posting -> toJobPosting(company, posting)).toList();
         } catch (Exception e) {
             log.error("Failed to scrape Lever for company: {}", company, e);
             return Collections.emptyList();
         }
+    }
+
+    private JobPosting toJobPosting(String company, Map<String, Object> posting) {
+        String location = "";
+        Object categories = posting.get("categories");
+        if (categories instanceof Map<?, ?> catMap && catMap.get("location") != null) {
+            location = catMap.get("location").toString();
+        }
+
+        Instant postedDate = null;
+        Object createdAt = posting.get("createdAt");
+        if (createdAt instanceof Number num) {
+            postedDate = Instant.ofEpochMilli(num.longValue());
+        }
+
+        return JobPosting.builder()
+                .company(company)
+                .externalId(strOrEmpty(posting.get("id")))
+                .title(strOrEmpty(posting.get("text")))
+                .url(strOrEmpty(posting.get("hostedUrl")))
+                .location(location)
+                .description(strOrEmpty(posting.get("descriptionPlain")))
+                .postedDate(postedDate)
+                .detectedAt(Instant.now())
+                .build();
+    }
+
+    private static String strOrEmpty(Object value) {
+        return value != null ? value.toString() : "";
     }
 }

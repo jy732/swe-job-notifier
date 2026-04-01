@@ -58,60 +58,49 @@ public class GreenhouseScraper implements JobScraper {
             }
 
             List<Map<String, Object>> jobs = (List<Map<String, Object>>) response.get("jobs");
-
-            return jobs.stream()
-                    .map(
-                            job -> {
-                                String locationName = "";
-                                Object locationObj = job.get("location");
-                                if (locationObj instanceof Map<?, ?> locMap) {
-                                    Object name = locMap.get("name");
-                                    if (name != null) {
-                                        locationName = name.toString();
-                                    }
-                                }
-
-                                String content =
-                                        job.get("content") != null
-                                                ? job.get("content")
-                                                        .toString()
-                                                        .replaceAll("<[^>]+>", "")
-                                                : "";
-
-                                String updatedAt =
-                                        job.get("updated_at") != null
-                                                ? job.get("updated_at").toString()
-                                                : null;
-                                Instant postedDate = null;
-                                if (updatedAt != null) {
-                                    try {
-                                        postedDate = Instant.parse(updatedAt);
-                                    } catch (Exception e) {
-                                        // ignore parse errors
-                                    }
-                                }
-
-                                return JobPosting.builder()
-                                        .company(company)
-                                        .externalId(String.valueOf(job.get("id")))
-                                        .title(
-                                                job.get("title") != null
-                                                        ? job.get("title").toString()
-                                                        : "")
-                                        .url(
-                                                job.get("absolute_url") != null
-                                                        ? job.get("absolute_url").toString()
-                                                        : "")
-                                        .location(locationName)
-                                        .description(content)
-                                        .postedDate(postedDate)
-                                        .detectedAt(Instant.now())
-                                        .build();
-                            })
-                    .toList();
+            return jobs.stream().map(job -> toJobPosting(company, job)).toList();
         } catch (Exception e) {
             log.error("Failed to scrape Greenhouse for company: {}", company, e);
             return Collections.emptyList();
         }
+    }
+
+    private JobPosting toJobPosting(String company, Map<String, Object> job) {
+        String locationName = "";
+        Object locationObj = job.get("location");
+        if (locationObj instanceof Map<?, ?> locMap && locMap.get("name") != null) {
+            locationName = locMap.get("name").toString();
+        }
+
+        String content =
+                job.get("content") != null
+                        ? job.get("content").toString().replaceAll("<[^>]+>", "")
+                        : "";
+
+        Instant postedDate = parseInstant(job.get("updated_at"));
+
+        return JobPosting.builder()
+                .company(company)
+                .externalId(String.valueOf(job.get("id")))
+                .title(strOrEmpty(job.get("title")))
+                .url(strOrEmpty(job.get("absolute_url")))
+                .location(locationName)
+                .description(content)
+                .postedDate(postedDate)
+                .detectedAt(Instant.now())
+                .build();
+    }
+
+    private static Instant parseInstant(Object value) {
+        if (value == null) return null;
+        try {
+            return Instant.parse(value.toString());
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static String strOrEmpty(Object value) {
+        return value != null ? value.toString() : "";
     }
 }

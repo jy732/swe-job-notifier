@@ -14,105 +14,39 @@ Automated job posting monitor that scrapes career pages, filters for mid-level s
 6. **Persist** — All jobs saved to H2 for dedup tracking; Gemini failures are retried on subsequent polls (auto-approved after 3 failures)
 7. **Email alert** — Independent 5-minute scan sends alerts for any unnotified mid-level jobs
 
-### Detailed Workflow
+### End-to-End Workflow
 
 ```mermaid
 flowchart TD
-    subgraph POLL["Poll Cycle (every 15 min)"]
-        A["`**@Scheduled**
-        JobPollingService.poll()`"] --> B{For each scraper & company}
+    START(["Every 15 min"]) --> SCRAPE["Scrape career pages\nGreenhouse | Lever | Workday"]
+    SCRAPE --> FRESH["Filter: remove stale postings"]
+    FRESH --> EXCLUDE["Filter: exclude intern, staff+,\nmanagement, director, VP, PhD"]
+    EXCLUDE --> LOCATION["Filter: US-based roles only"]
+    LOCATION --> SWE["Filter: SWE-relevant titles only"]
+    SWE --> DEDUP{"Already\nin DB?"}
+    DEDUP -- Yes --> SKIP([Skip])
+    DEDUP -- No --> AUTO{"Obvious\nmid-level title?"}
+    AUTO -- Yes --> APPROVED["Mid-level = YES"]
+    AUTO -- No --> GEMINI["Gemini 2.5 Flash\nclassify in batches of 50"]
+    GEMINI -- Approved --> APPROVED
+    GEMINI -- Rejected --> REJECTED["Mid-level = NO"]
+    GEMINI -- API failed --> FAILED["Classification failed\nfailures++"]
+    APPROVED --> DB[("H2 Database")]
+    REJECTED --> DB
+    FAILED --> DB
+    DB --> RETRYCHECK{"Failed\n>= 3 times?"}
+    RETRYCHECK -- Yes --> FALLBACK["Auto-approve\nas mid-level"] --> DB
+    RETRYCHECK -- No --> REGEMINI["Re-classify\nvia Gemini"] --> DB
+    RETRYCHECK -. No failures .-> SCANSTART
 
-        B --> C["`**Scrape**
-        Greenhouse / Lever / Workday API`"]
+    SCANSTART(["Every 5 min"]) --> QUERY["Query: midLevel=true\nAND notified=false"]
+    QUERY -- None --> NOP([No-op])
+    QUERY -- Found --> EMAIL["Send email alert\nvia Gmail SMTP"]
+    EMAIL -- Success --> MARK["Mark notified=true"] --> DONE([Done])
+    EMAIL -- Failure --> RETRY_EMAIL(["Retry in 5 min"])
 
-        C --> D["`**Tier 0: Freshness Filter**
-        Remove stale postings`"]
-
-        D --> E["`**Tier 1: Title Exclusion**
-        Exclude intern, staff+, management,
-        director, VP, PhD, etc.`"]
-
-        E --> F["`**Tier 1.5: US Location**
-        Keep only US-based roles`"]
-
-        F --> G["`**Tier 2: SWE Relevance**
-        Keep software engineering roles only`"]
-
-        G --> H{"`**Dedup**
-        Already in DB?`"}
-
-        H -- Yes --> I[Skip]
-        H -- No --> J{"`**Auto-approve?**
-        Obvious mid-level title?`"}
-
-        J -- Yes --> K["`midLevel = true
-        classificationFailures = 0`"]
-
-        J -- No --> L["`**Gemini 2.5 Flash**
-        Batch classify (up to 50)
-        with retry (3 attempts)`"]
-
-        L -- Approved --> K
-        L -- Rejected --> M["`midLevel = false
-        classificationFailures = 0`"]
-        L -- Failed --> N["`midLevel = false
-        classificationFailures++`"]
-
-        K --> O[("`**H2 Database**
-        Persist for dedup`")]
-        M --> O
-        N --> O
-    end
-
-    subgraph RETRY["Retry Failed Classifications (end of poll)"]
-        O --> P{"`classificationFailures
-        >= 3?`"}
-        P -- Yes --> Q["`**Auto-approve fallback**
-        midLevel = true`"]
-        P -- No --> R["`**Re-send to Gemini**
-        for classification`"]
-        R -- Approved --> Q
-        R -- Failed --> S["`classificationFailures++
-        Retry next poll`"]
-        Q --> O
-        S --> O
-    end
-
-    subgraph NOTIFY["Alert Scan (every 5 min)"]
-        T["`**@Scheduled**
-        NotificationService.scanAndNotify()`"] --> U{"`Query DB:
-        midLevel=true AND
-        notified=false`"}
-        U -- None found --> V[No-op]
-        U -- Jobs found --> W["`**Send email alert**
-        via Gmail SMTP`"]
-        W -- Success --> X["`Mark jobs as
-        notified = true`"]
-        W -- Failure --> Y["`Jobs remain unnotified
-        Retry in 5 min`"]
-    end
-
-    subgraph DAILY["Daily Jobs"]
-        Z["`**Daily Summary** (8 AM)
-        Email summary of recent activity`"]
-        AA["`**Data Cleanup** (3 AM)
-        Delete jobs older than 90 days`"]
-    end
-
-    subgraph METRICS["Observability"]
-        BB["`**Actuator Metrics**
-        /actuator/metrics/job.*`"]
-        CC["`**Rolling Logs**
-        logs/app.log (30-day retention)`"]
-        DD["`**Health Check**
-        /actuator/health`"]
-    end
-
-    style POLL fill:#1a1a2e,stroke:#16213e,color:#e0e0e0
-    style RETRY fill:#1a1a2e,stroke:#16213e,color:#e0e0e0
-    style NOTIFY fill:#0f3460,stroke:#16213e,color:#e0e0e0
-    style DAILY fill:#533483,stroke:#16213e,color:#e0e0e0
-    style METRICS fill:#2b2d42,stroke:#16213e,color:#e0e0e0
+    DAILY1(["Daily 8 AM"]) --> SUMMARY["Email summary of\nrecent activity"]
+    DAILY2(["Daily 3 AM"]) --> CLEANUP["Delete jobs\nolder than 90 days"]
 ```
 
 ## Supported Platforms

@@ -17,8 +17,7 @@ import org.springframework.stereotype.Service;
  * <p>Design decisions:
  *
  * <ul>
- *   <li>Jobs are sent in batches of {@value #BATCH_SIZE} with a {@value #BATCH_DELAY_MS}ms delay
- *       between batches to stay within Gemini free-tier rate limits (15 RPM / 1M TPM).
+ *   <li>Jobs are sent in batches of {@value #BATCH_SIZE} to stay within token limits.
  *   <li>Each batch is retried up to 3 times with exponential backoff (5s -> 10s -> 20s).
  *   <li>When no API key is configured, all pre-filtered jobs are returned as approved — this lets
  *       the app run in dev mode without Gemini, relying solely on local title filters.
@@ -29,7 +28,6 @@ import org.springframework.stereotype.Service;
 public class JobClassifier {
 
     private static final int BATCH_SIZE = 50;
-    private static final long BATCH_DELAY_MS = 5000;
 
     private final GeminiClient geminiClient;
     private final PipelineMetrics metrics;
@@ -69,10 +67,6 @@ public class JobClassifier {
 
         for (int i = 0; i < jobs.size(); i += BATCH_SIZE) {
             int batchNum = (i / BATCH_SIZE) + 1;
-            if (!waitBetweenBatches(i, batchNum, totalBatches)) {
-                failed.addAll(jobs.subList(i, jobs.size()));
-                break;
-            }
             List<JobPosting> batch = jobs.subList(i, Math.min(i + BATCH_SIZE, jobs.size()));
             processBatch(batch, batchNum, totalBatches, classified, failed);
         }
@@ -80,21 +74,6 @@ public class JobClassifier {
         log.info("Gemini classification complete: {}/{} mid-level, {} failed",
                 classified.size(), jobs.size(), failed.size());
         return new ClassificationResult(classified, failed);
-    }
-
-    /** Waits between batches to respect rate limits. Returns false if interrupted. */
-    private boolean waitBetweenBatches(int offset, int batchNum, int totalBatches) {
-        if (offset == 0) return true;
-        try {
-            log.info("Waiting {}ms before Gemini batch {}/{}",
-                    BATCH_DELAY_MS, batchNum, totalBatches);
-            Thread.sleep(BATCH_DELAY_MS);
-            return true;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            log.warn("Gemini classification interrupted at batch {}/{}", batchNum, totalBatches);
-            return false;
-        }
     }
 
     /** Classifies a single batch and appends results to classified/failed lists. */

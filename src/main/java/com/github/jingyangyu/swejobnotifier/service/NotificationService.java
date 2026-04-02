@@ -29,6 +29,7 @@ public class NotificationService {
 
     private final EmailNotifier emailNotifier;
     private final JobPostingRepository repository;
+    private final PipelineMetrics metrics;
 
     /**
      * Scans for unnotified mid-level jobs and sends an alert email if any are found.
@@ -45,14 +46,18 @@ public class NotificationService {
         log.info("=== ALERT SCAN === {} unnotified job(s) found, sending...", unnotified.size());
         boolean sent = emailNotifier.sendNewJobAlert(unnotified);
         if (sent) {
+            metrics.recordEmailSuccess();
             for (JobPosting job : unnotified) {
                 job.setNotified(true);
                 repository.save(job);
             }
             log.info("Alert SENT — {} job(s) marked as notified", unnotified.size());
         } else {
+            metrics.recordEmailFail();
             log.warn("Alert FAILED — {} job(s) remain unnotified, will retry in 5 min",
                     unnotified.size());
         }
+        metrics.setUnnotifiedCount(
+                repository.findByMidLevelTrueAndNotifiedFalseOrderByDetectedAtDesc().size());
     }
 }

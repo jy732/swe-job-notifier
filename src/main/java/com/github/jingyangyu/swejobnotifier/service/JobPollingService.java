@@ -33,16 +33,19 @@ public class JobPollingService {
     private final JobPostingRepository repository;
     private final JobClassifier classifier;
     private final JobTitleFilter titleFilter;
+    private final PipelineMetrics metrics;
 
     public JobPollingService(
             List<JobScraper> scrapers,
             JobPostingRepository repository,
             JobClassifier classifier,
-            JobTitleFilter titleFilter) {
+            JobTitleFilter titleFilter,
+            PipelineMetrics metrics) {
         this.scrapers = scrapers;
         this.repository = repository;
         this.classifier = classifier;
         this.titleFilter = titleFilter;
+        this.metrics = metrics;
     }
 
     /** Result of processing jobs for a single company. */
@@ -78,6 +81,7 @@ public class JobPollingService {
     @Scheduled(cron = "${job.poll.cron}")
     public void poll() {
         log.info("=== POLL CYCLE START ===");
+        var timerSample = metrics.startPollTimer();
         long startTime = System.currentTimeMillis();
         List<JobPosting> allNewJobs = new ArrayList<>();
         int totalScraped = 0;
@@ -101,6 +105,7 @@ public class JobPollingService {
                     allNewJobs.addAll(result.getApproved());
                     companiesProcessed++;
                 } catch (Exception e) {
+                    metrics.recordScrapeFail();
                     log.error(
                             "Error polling [{}] {} — skipping company",
                             scraper.platform(),
@@ -113,6 +118,10 @@ public class JobPollingService {
 
         // Retry jobs that previously failed Gemini classification
         retryFailedClassifications(allNewJobs);
+
+        metrics.stopPollTimer(timerSample);
+        metrics.recordJobsScraped(totalScraped);
+        metrics.recordJobsAutoApproved(totalAutoApproved);
 
         long elapsed = System.currentTimeMillis() - startTime;
         log.info(
@@ -142,6 +151,7 @@ public class JobPollingService {
 
         // Auto-approve jobs that exhausted retries
         for (JobPosting job : exhaustedJobs) {
+            metrics.recordAutoApprovedFallback();
             log.warn("Auto-approving after {} Gemini failures: [{}] {}",
                     job.getClassificationFailures(), job.getCompany(), job.getTitle());
             job.setMidLevel(true);

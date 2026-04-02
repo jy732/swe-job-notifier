@@ -32,10 +32,12 @@ public class JobClassifier {
     private static final long BATCH_DELAY_MS = 5000;
 
     private final GeminiClient geminiClient;
+    private final PipelineMetrics metrics;
     private final RetryTemplate retryTemplate;
 
-    public JobClassifier(GeminiClient geminiClient) {
+    public JobClassifier(GeminiClient geminiClient, PipelineMetrics metrics) {
         this.geminiClient = geminiClient;
+        this.metrics = metrics;
         this.retryTemplate =
                 RetryTemplate.builder().maxAttempts(3).exponentialBackoff(5000, 2, 20000).build();
     }
@@ -101,10 +103,13 @@ public class JobClassifier {
         List<JobPosting> result = classifyBatchWithRetry(batch);
         if (result == null) {
             failed.addAll(batch);
+            metrics.recordGeminiFail();
             log.warn("Gemini batch {}/{} failed — {} job(s) will retry next poll",
                     batchNum, totalBatches, batch.size());
         } else {
             classified.addAll(result);
+            metrics.recordGeminiSuccess();
+            metrics.recordJobsClassified(result.size());
             log.info("Gemini batch {}/{}: {}/{} mid-level (running total: {})",
                     batchNum, totalBatches, result.size(), batch.size(), classified.size());
         }
@@ -121,6 +126,7 @@ public class JobClassifier {
         try {
             return retryTemplate.execute(context -> {
                 if (context.getRetryCount() > 0) {
+                    metrics.recordGeminiRetry();
                     log.warn("Gemini retry attempt {} for batch of {}",
                             context.getRetryCount(), batch.size());
                 }

@@ -58,4 +58,9 @@ public class JobPosting {
     @Column(nullable = false, columnDefinition = "BOOLEAN DEFAULT TRUE")
     @Builder.Default
     private boolean midLevel = false;
+
+    /** Number of consecutive Gemini classification failures. 0 = classified successfully. */
+    @Column(nullable = false)
+    @Builder.Default
+    private int classificationFailures = 0;
 }

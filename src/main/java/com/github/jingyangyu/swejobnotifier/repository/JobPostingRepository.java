@@ -16,6 +16,10 @@ public interface JobPostingRepository extends JpaRepository<JobPosting, Long> {
 
     List<JobPosting> findByMidLevelTrueAndNotifiedFalseOrderByDetectedAtDesc();
 
+    /** Finds jobs that failed Gemini classification but haven't exhausted retries yet. */
+    List<JobPosting> findByClassificationFailuresGreaterThanAndClassificationFailuresLessThan(
+            int min, int max);
+
     @Modifying
     @Query("DELETE FROM JobPosting jp WHERE jp.postedDate < ?1")
     int deleteByPostedDateBefore(Instant cutoff);

@@ -99,9 +99,13 @@ public class JobTitleFilter {
             return true;
         }
 
-        // Match "San Francisco, CA" or "Austin, TX" patterns
+        // Match "San Francisco, CA" or "Austin, TX" patterns — require state abbrev to be
+        // a complete token so "India" doesn't false-match Indiana ("in")
         for (String state : FilterKeywords.US_STATE_ABBREVIATIONS) {
-            if (loc.contains(", " + state) || loc.endsWith(state)) {
+            String withComma = ", " + state;
+            if (loc.endsWith(withComma)
+                    || loc.contains(withComma + " ")
+                    || loc.contains(withComma + ",")) {
                 return true;
             }
         }
@@ -109,6 +113,13 @@ public class JobTitleFilter {
         // Only reject locations that explicitly name a non-US country
         for (String country : FilterKeywords.NON_US_COUNTRIES) {
             if (loc.contains(country)) {
+                return false;
+            }
+        }
+
+        // Reject "Dublin, IE" style locations using ISO country codes (no US-state collisions)
+        for (String code : FilterKeywords.NON_US_COUNTRY_CODES) {
+            if (loc.endsWith(", " + code)) {
                 return false;
             }
         }

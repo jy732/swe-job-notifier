@@ -57,4 +57,12 @@ final class FilterKeywords {
         "uk", "united kingdom", "canada", "germany", "france", "india", "australia",
         "japan", "singapore", "ireland", "mexico", "brazil", "china", "israel"
     };
+
+    // ISO 2-letter country codes that DON'T collide with US state abbreviations.
+    // Codes like CA (California), IN (Indiana), DE (Delaware) are omitted — those
+    // countries are already caught by the full-name list above.
+    static final String[] NON_US_COUNTRY_CODES = {
+        "gb", "ie", "jp", "sg", "au", "fr", "br", "cn", "il", "mx", "kr", "tw",
+        "nl", "se", "ch", "at", "pl", "cz", "dk", "fi", "no", "nz", "ph", "th"
+    };
 }

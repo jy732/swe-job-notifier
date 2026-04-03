@@ -1,6 +1,7 @@
-package com.github.jingyangyu.swejobnotifier.service;
+package com.github.jingyangyu.swejobnotifier.service.classification;
 
 import com.github.jingyangyu.swejobnotifier.model.JobPosting;
+import com.github.jingyangyu.swejobnotifier.service.PipelineMetrics;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;

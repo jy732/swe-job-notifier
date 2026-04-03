@@ -2,6 +2,9 @@ package com.github.jingyangyu.swejobnotifier.service;
 
 import com.github.jingyangyu.swejobnotifier.model.JobPosting;
 import com.github.jingyangyu.swejobnotifier.repository.JobPostingRepository;
+import com.github.jingyangyu.swejobnotifier.service.classification.ClassificationResult;
+import com.github.jingyangyu.swejobnotifier.service.classification.JobClassifier;
+import com.github.jingyangyu.swejobnotifier.service.classification.JobTitleFilter;
 import com.github.jingyangyu.swejobnotifier.scraper.JobScraper;
 import java.time.Instant;
 import java.util.ArrayList;

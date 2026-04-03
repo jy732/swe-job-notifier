@@ -1,4 +1,4 @@
-package com.github.jingyangyu.swejobnotifier.service;
+package com.github.jingyangyu.swejobnotifier.service.classification;
 
 import java.util.List;
 import java.util.regex.Pattern;

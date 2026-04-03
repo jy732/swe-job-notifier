@@ -1,4 +1,4 @@
-package com.github.jingyangyu.swejobnotifier.service;
+package com.github.jingyangyu.swejobnotifier.service.classification;
 
 import com.github.jingyangyu.swejobnotifier.model.JobPosting;
 import java.util.ArrayList;

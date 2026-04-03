@@ -18,7 +18,7 @@ Automated job posting monitor that scrapes career pages, filters for mid-level s
 
 ```mermaid
 flowchart TD
-    START(["Every 15 min"]) --> SCRAPE["Scrape career pages\nGreenhouse | Lever | Workday"]
+    START(["Every 15 min"]) --> SCRAPE["Scrape career pages\nGreenhouse | Lever | Workday | Amazon\nGoogle | Apple | Microsoft | Meta | Tesla"]
     SCRAPE --> FRESH["Filter: remove stale postings"]
     FRESH --> EXCLUDE["Filter: exclude intern, staff+,\nmanagement, director, VP, PhD"]
     EXCLUDE --> LOCATION["Filter: US-based roles only"]
@@ -51,16 +51,23 @@ flowchart TD
 
 ## Supported Platforms
 
-| Platform | API | Companies |
-|----------|-----|-----------|
-| **Greenhouse** | JSON board API | Stripe, Airbnb, Cloudflare, Datadog, Twilio, Figma, Discord, Coinbase, Robinhood, Pinterest, Dropbox, DoorDash, Instacart, Databricks, MongoDB, Elastic, GitLab, Roblox, Unity, Lyft, Block, Anthropic, Twitch, Okta, Duolingo |
-| **Lever** | JSON postings API | Netflix, Spotify, Palantir, Plaid |
-| **Workday** | Search API | NVIDIA, Salesforce, Intel, Mastercard, Walmart, Adobe, Cisco, PayPal, Qualcomm, Snap, Broadcom |
+| Platform | Method | Companies |
+|----------|--------|-----------|
+| **Greenhouse** | JSON API | Stripe, Airbnb, Cloudflare, Datadog, Twilio, Figma, Discord, Coinbase, Robinhood, Pinterest, Dropbox, DoorDash, Instacart, Databricks, MongoDB, Elastic, GitLab, Roblox, Unity, Lyft, Block, Anthropic, Twitch, Okta, Duolingo |
+| **Lever** | JSON API | Netflix, Spotify, Palantir, Plaid |
+| **Workday** | JSON API | NVIDIA, Salesforce, Intel, Mastercard, Walmart, Adobe, Cisco, PayPal, Qualcomm, Snap, Broadcom |
+| **Amazon** | JSON API | Amazon |
+| **Google** | Playwright | Google |
+| **Apple** | Playwright | Apple |
+| **Microsoft** | Playwright | Microsoft |
+| **Meta** | Playwright | Meta |
+| **Tesla** | Playwright | Tesla |
 
 ## Prerequisites
 
 - Java 17+
 - Maven (wrapper included)
+- Chromium (auto-installed by Playwright on first run — needed for Google, Apple, Microsoft, Meta, Tesla scrapers)
 - Gmail account with [App Password](https://myaccount.google.com/apppasswords)
 - Gemini API key (optional — without it, all pre-filtered jobs are approved)
 
@@ -146,6 +153,7 @@ All configuration is in `src/main/resources/application.properties`. Key setting
 - **Framework:** Spring Boot 4.0.5
 - **Database:** H2 (file-based)
 - **AI:** Google Gemini 2.5 Flash
+- **Scraping:** WebClient (JSON APIs) + Playwright (SPA career sites)
 - **Email:** Spring Mail (Gmail SMTP)
 - **Metrics:** Micrometer + Spring Boot Actuator
 - **Build:** Maven

@@ -70,6 +70,13 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- Headless browser for SPA career sites -->
+        <dependency>
+            <groupId>com.microsoft.playwright</groupId>
+            <artifactId>playwright</artifactId>
+            <version>1.52.0</version>
+        </dependency>
+
         <!-- Test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

@@ -7,7 +7,6 @@ import com.microsoft.playwright.Page;
 import com.microsoft.playwright.options.WaitUntilState;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
@@ -55,13 +54,13 @@ public class MicrosoftScraper implements JobScraper {
 
             for (int pageNum = 1; pageNum <= MAX_PAGES; pageNum++) {
                 String url = String.format(SEARCH_URL, pageNum);
-                page.navigate(url, new Page.NavigateOptions()
-                        .setWaitUntil(WaitUntilState.NETWORKIDLE));
+                page.navigate(
+                        url, new Page.NavigateOptions().setWaitUntil(WaitUntilState.NETWORKIDLE));
 
                 try {
                     page.waitForSelector(
                             "[class*='ms-List-cell'], [class*='job-card'], "
-                            + "[data-automation-id*='job']",
+                                    + "[data-automation-id*='job']",
                             new Page.WaitForSelectorOptions().setTimeout(15000));
                 } catch (Exception e) {
                     log.debug("Microsoft page {}: no job cards found, stopping", pageNum);
@@ -69,35 +68,37 @@ public class MicrosoftScraper implements JobScraper {
                 }
 
                 @SuppressWarnings("unchecked")
-                List<Map<String, String>> jobs = (List<Map<String, String>>) page.evaluate(
-                        "() => {\n"
-                        + "  const results = [];\n"
-                        + "  const cards = document.querySelectorAll("
-                        + "'[class*=\"ms-List-cell\"], [class*=\"job-card\"],"
-                        + " [role=\"listitem\"]');\n"
-                        + "  cards.forEach(card => {\n"
-                        + "    const link = card.querySelector("
-                        + "'a[href*=\"/job/\"], a[href*=\"/global/en/job/\"]');\n"
-                        + "    if (!link) return;\n"
-                        + "    const href = link.getAttribute('href') || '';\n"
-                        + "    const idMatch = href.match(/\\/job\\/(\\d+)/);\n"
-                        + "    const title = link.textContent.trim()"
-                        + " || card.querySelector('h2,h3')?.textContent?.trim() || '';\n"
-                        + "    const locEl = card.querySelector("
-                        + "'[class*=\"location\"], [aria-label*=\"location\"]');\n"
-                        + "    const dateEl = card.querySelector("
-                        + "'[class*=\"date\"], [class*=\"posted\"]');\n"
-                        + "    results.push({\n"
-                        + "      id: idMatch ? idMatch[1] : href,\n"
-                        + "      title: title,\n"
-                        + "      url: href.startsWith('http') ? href"
-                        + " : 'https://jobs.careers.microsoft.com' + href,\n"
-                        + "      location: locEl ? locEl.textContent.trim() : '',\n"
-                        + "      date: dateEl ? dateEl.textContent.trim() : ''\n"
-                        + "    });\n"
-                        + "  });\n"
-                        + "  return results;\n"
-                        + "}");
+                List<Map<String, String>> jobs =
+                        (List<Map<String, String>>)
+                                page.evaluate(
+                                        "() => {\n"
+                                                + "  const results = [];\n"
+                                                + "  const cards = document.querySelectorAll("
+                                                + "'[class*=\"ms-List-cell\"], [class*=\"job-card\"],"
+                                                + " [role=\"listitem\"]');\n"
+                                                + "  cards.forEach(card => {\n"
+                                                + "    const link = card.querySelector("
+                                                + "'a[href*=\"/job/\"], a[href*=\"/global/en/job/\"]');\n"
+                                                + "    if (!link) return;\n"
+                                                + "    const href = link.getAttribute('href') || '';\n"
+                                                + "    const idMatch = href.match(/\\/job\\/(\\d+)/);\n"
+                                                + "    const title = link.textContent.trim()"
+                                                + " || card.querySelector('h2,h3')?.textContent?.trim() || '';\n"
+                                                + "    const locEl = card.querySelector("
+                                                + "'[class*=\"location\"], [aria-label*=\"location\"]');\n"
+                                                + "    const dateEl = card.querySelector("
+                                                + "'[class*=\"date\"], [class*=\"posted\"]');\n"
+                                                + "    results.push({\n"
+                                                + "      id: idMatch ? idMatch[1] : href,\n"
+                                                + "      title: title,\n"
+                                                + "      url: href.startsWith('http') ? href"
+                                                + " : 'https://jobs.careers.microsoft.com' + href,\n"
+                                                + "      location: locEl ? locEl.textContent.trim() : '',\n"
+                                                + "      date: dateEl ? dateEl.textContent.trim() : ''\n"
+                                                + "    });\n"
+                                                + "  });\n"
+                                                + "  return results;\n"
+                                                + "}");
 
                 if (jobs == null || jobs.isEmpty()) {
                     log.debug("Microsoft page {}: no jobs extracted, stopping", pageNum);
@@ -105,16 +106,17 @@ public class MicrosoftScraper implements JobScraper {
                 }
 
                 for (Map<String, String> job : jobs) {
-                    allJobs.add(JobPosting.builder()
-                            .company("microsoft")
-                            .externalId(job.getOrDefault("id", ""))
-                            .title(job.getOrDefault("title", ""))
-                            .url(job.getOrDefault("url", ""))
-                            .location(job.getOrDefault("location", ""))
-                            .description("")
-                            .postedDate(null)
-                            .detectedAt(Instant.now())
-                            .build());
+                    allJobs.add(
+                            JobPosting.builder()
+                                    .company("microsoft")
+                                    .externalId(job.getOrDefault("id", ""))
+                                    .title(job.getOrDefault("title", ""))
+                                    .url(job.getOrDefault("url", ""))
+                                    .location(job.getOrDefault("location", ""))
+                                    .description("")
+                                    .postedDate(null)
+                                    .detectedAt(Instant.now())
+                                    .build());
                 }
 
                 log.debug("Microsoft page {}: extracted {} jobs", pageNum, jobs.size());

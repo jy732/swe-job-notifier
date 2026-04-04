@@ -16,15 +16,32 @@ final class FilterKeywords {
     // ── Tier 1: Exclude titles containing any of these (case-insensitive) ──
     static final List<String> EXCLUDE_KEYWORDS =
             List.of(
-                    "senior", "sr.", "sr ",
-                    "staff", "principal", "lead",
-                    "manager", "director",
-                    "vp ", "vice president", "head of", "chief",
-                    "intern", "internship", "new grad",
-                    "co-op", "university", "graduate", "college",
-                    "frontend", "front-end",
-                    "mobile", "ios", "android",
-                    "embedded", "security");
+                    "senior",
+                    "sr.",
+                    "sr ",
+                    "staff",
+                    "principal",
+                    "lead",
+                    "manager",
+                    "director",
+                    "vp ",
+                    "vice president",
+                    "head of",
+                    "chief",
+                    "intern",
+                    "internship",
+                    "new grad",
+                    "co-op",
+                    "university",
+                    "graduate",
+                    "college",
+                    "frontend",
+                    "front-end",
+                    "mobile",
+                    "ios",
+                    "android",
+                    "embedded",
+                    "security");
 
     // ── Tier 2: Auto-approve obvious mid-level SWE titles ──
     // Matches: "Software Engineer II", "SDE II", "SWE 2", "Backend Developer II", etc.
@@ -38,10 +55,16 @@ final class FilterKeywords {
     // ── Tier 3: SWE-relevant titles must contain one ROLE + one TITLE keyword ──
     static final List<String> ROLE_KEYWORDS =
             List.of(
-                    "software", "backend", "back-end",
-                    "full stack", "fullstack", "full-stack",
-                    "platform", "infrastructure",
-                    "swe", "sde");
+                    "software",
+                    "backend",
+                    "back-end",
+                    "full stack",
+                    "fullstack",
+                    "full-stack",
+                    "platform",
+                    "infrastructure",
+                    "swe",
+                    "sde");
 
     static final List<String> TITLE_KEYWORDS = List.of("engineer", "developer", "eng");
 
@@ -55,14 +78,57 @@ final class FilterKeywords {
 
     // ── Location: Known non-US countries — only these trigger rejection ──
     static final String[] NON_US_COUNTRIES = {
-        "uk", "united kingdom", "canada", "germany", "france", "india", "australia",
-        "japan", "singapore", "ireland", "mexico", "brazil", "china", "israel",
-        "taiwan", "south korea", "korea", "netherlands", "sweden", "switzerland",
-        "poland", "czech", "denmark", "finland", "norway", "new zealand",
-        "philippines", "thailand", "hong kong", "indonesia", "malaysia", "vietnam",
-        "spain", "italy", "portugal", "austria", "belgium", "romania", "hungary",
-        "argentina", "colombia", "chile", "peru", "egypt", "nigeria", "kenya",
-        "south africa", "saudi arabia", "united arab emirates", "uae", "qatar"
+        "uk",
+        "united kingdom",
+        "canada",
+        "germany",
+        "france",
+        "india",
+        "australia",
+        "japan",
+        "singapore",
+        "ireland",
+        "mexico",
+        "brazil",
+        "china",
+        "israel",
+        "taiwan",
+        "south korea",
+        "korea",
+        "netherlands",
+        "sweden",
+        "switzerland",
+        "poland",
+        "czech",
+        "denmark",
+        "finland",
+        "norway",
+        "new zealand",
+        "philippines",
+        "thailand",
+        "hong kong",
+        "indonesia",
+        "malaysia",
+        "vietnam",
+        "spain",
+        "italy",
+        "portugal",
+        "austria",
+        "belgium",
+        "romania",
+        "hungary",
+        "argentina",
+        "colombia",
+        "chile",
+        "peru",
+        "egypt",
+        "nigeria",
+        "kenya",
+        "south africa",
+        "saudi arabia",
+        "united arab emirates",
+        "uae",
+        "qatar"
     };
 
     // ISO 2-letter country codes that DON'T collide with US state abbreviations.

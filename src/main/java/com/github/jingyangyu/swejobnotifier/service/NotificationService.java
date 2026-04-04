@@ -13,8 +13,8 @@ import org.springframework.stereotype.Service;
  * Scans for unnotified mid-level jobs every 5 minutes and sends alert emails.
  *
  * <p>Decoupled from the poll cycle: {@code JobPollingService} scrapes, filters, classifies, and
- * persists jobs with {@code midLevel=true/false}. This service independently picks up any
- * {@code midLevel=true AND notified=false} jobs and sends alerts. This design means:
+ * persists jobs with {@code midLevel=true/false}. This service independently picks up any {@code
+ * midLevel=true AND notified=false} jobs and sends alerts. This design means:
  *
  * <ul>
  *   <li>No inline email sending during the poll — poll failures don't affect notifications.
@@ -32,8 +32,8 @@ public class NotificationService {
     private final PipelineMetrics metrics;
 
     /**
-     * Scans for unnotified mid-level jobs and sends an alert email if any are found.
-     * Runs every 5 minutes. No-ops silently when nothing to send.
+     * Scans for unnotified mid-level jobs and sends an alert email if any are found. Runs every 5
+     * minutes. No-ops silently when nothing to send.
      */
     @Scheduled(cron = "${job.notification.scan.cron:0 */5 * * * *}")
     public void scanAndNotify() {
@@ -54,7 +54,8 @@ public class NotificationService {
             log.info("Alert SENT — {} job(s) marked as notified", unnotified.size());
         } else {
             metrics.recordEmailFail();
-            log.warn("Alert FAILED — {} job(s) remain unnotified, will retry in 5 min",
+            log.warn(
+                    "Alert FAILED — {} job(s) remain unnotified, will retry in 5 min",
                     unnotified.size());
         }
         metrics.setUnnotifiedCount(

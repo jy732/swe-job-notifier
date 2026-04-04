@@ -2,10 +2,10 @@ package com.github.jingyangyu.swejobnotifier.service;
 
 import com.github.jingyangyu.swejobnotifier.model.JobPosting;
 import com.github.jingyangyu.swejobnotifier.repository.JobPostingRepository;
+import com.github.jingyangyu.swejobnotifier.scraper.JobScraper;
 import com.github.jingyangyu.swejobnotifier.service.classification.ClassificationResult;
 import com.github.jingyangyu.swejobnotifier.service.classification.JobClassifier;
 import com.github.jingyangyu.swejobnotifier.service.classification.JobTitleFilter;
-import com.github.jingyangyu.swejobnotifier.scraper.JobScraper;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -140,23 +140,25 @@ public class JobPollingService {
     }
 
     /**
-     * Retries Gemini classification for previously failed jobs. Jobs that have reached
-     * {@value #MAX_CLASSIFICATION_FAILURES} failures are auto-approved. The rest are re-sent to
-     * Gemini.
+     * Retries Gemini classification for previously failed jobs. Jobs that have reached {@value
+     * #MAX_CLASSIFICATION_FAILURES} failures are auto-approved. The rest are re-sent to Gemini.
      */
     private void retryFailedClassifications(List<JobPosting> allNewJobs) {
-        List<JobPosting> retryJobs = repository
-                .findByClassificationFailuresGreaterThanAndClassificationFailuresLessThan(
+        List<JobPosting> retryJobs =
+                repository.findByClassificationFailuresGreaterThanAndClassificationFailuresLessThan(
                         0, MAX_CLASSIFICATION_FAILURES);
-        List<JobPosting> exhaustedJobs = repository
-                .findByClassificationFailuresGreaterThanAndClassificationFailuresLessThan(
+        List<JobPosting> exhaustedJobs =
+                repository.findByClassificationFailuresGreaterThanAndClassificationFailuresLessThan(
                         MAX_CLASSIFICATION_FAILURES - 1, Integer.MAX_VALUE);
 
         // Auto-approve jobs that exhausted retries
         for (JobPosting job : exhaustedJobs) {
             metrics.recordAutoApprovedFallback();
-            log.warn("Auto-approving after {} Gemini failures: [{}] {}",
-                    job.getClassificationFailures(), job.getCompany(), job.getTitle());
+            log.warn(
+                    "Auto-approving after {} Gemini failures: [{}] {}",
+                    job.getClassificationFailures(),
+                    job.getCompany(),
+                    job.getTitle());
             job.setMidLevel(true);
             job.setClassificationFailures(0);
             repository.save(job);
@@ -181,8 +183,11 @@ public class JobPollingService {
             repository.save(job);
         }
 
-        log.info("=== RETRY COMPLETE === {}/{} approved, {} failed (attempt {}+)",
-                result.getApproved().size(), retryJobs.size(), result.getFailed().size(),
+        log.info(
+                "=== RETRY COMPLETE === {}/{} approved, {} failed (attempt {}+)",
+                result.getApproved().size(),
+                retryJobs.size(),
+                result.getFailed().size(),
                 retryJobs.isEmpty() ? 0 : retryJobs.get(0).getClassificationFailures());
     }
 
@@ -223,8 +228,13 @@ public class JobPollingService {
 
         log.info(
                 "[{}] {} — {} scraped → {} fresh → {} after exclude → {} US location → {} SWE-relevant",
-                scraper.platform(), company, scraped.size(), fresh.size(),
-                afterExclude.size(), usLocation.size(), sweRelevant.size());
+                scraper.platform(),
+                company,
+                scraped.size(),
+                fresh.size(),
+                afterExclude.size(),
+                usLocation.size(),
+                sweRelevant.size());
         return sweRelevant;
     }
 
@@ -256,9 +266,13 @@ public class JobPollingService {
                 needsGemini.add(job);
             }
         }
-        log.info("[{}] {} — {} unseen: {} auto-approved, {} need Gemini",
-                scraper.platform(), company, unseen.size(),
-                autoApproved.size(), needsGemini.size());
+        log.info(
+                "[{}] {} — {} unseen: {} auto-approved, {} need Gemini",
+                scraper.platform(),
+                company,
+                unseen.size(),
+                autoApproved.size(),
+                needsGemini.size());
 
         // Gemini classification
         List<JobPosting> geminiApproved = List.of();
@@ -274,13 +288,24 @@ public class JobPollingService {
 
         int persisted = persistJobs(unseen, allApproved, geminiFailed);
 
-        log.info("[{}] {} — persisted {}, {} failed: {} mid-level ({} auto + {} Gemini)",
-                scraper.platform(), company, persisted, geminiFailed.size(),
-                allApproved.size(), autoApproved.size(), geminiApproved.size());
+        log.info(
+                "[{}] {} — persisted {}, {} failed: {} mid-level ({} auto + {} Gemini)",
+                scraper.platform(),
+                company,
+                persisted,
+                geminiFailed.size(),
+                allApproved.size(),
+                autoApproved.size(),
+                geminiApproved.size());
 
         return new CompanyProcessingResult(
-                allApproved, scrapedCount, unseen.size(), autoApproved.size(),
-                needsGemini.size(), persisted, geminiFailed.size());
+                allApproved,
+                scrapedCount,
+                unseen.size(),
+                autoApproved.size(),
+                needsGemini.size(),
+                persisted,
+                geminiFailed.size());
     }
 
     /**
@@ -294,9 +319,7 @@ public class JobPollingService {
      * </ul>
      */
     private int persistJobs(
-            List<JobPosting> toProcess,
-            List<JobPosting> approved,
-            List<JobPosting> geminiFailed) {
+            List<JobPosting> toProcess, List<JobPosting> approved, List<JobPosting> geminiFailed) {
         Set<String> approvedIds =
                 approved.stream().map(JobPosting::getExternalId).collect(Collectors.toSet());
         Set<String> failedIds =

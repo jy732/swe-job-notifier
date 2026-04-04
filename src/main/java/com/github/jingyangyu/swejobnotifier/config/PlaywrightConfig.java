@@ -9,11 +9,11 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Manages a shared headless Chromium browser instance for scraping SPA career sites
- * (Google, Apple, Microsoft, Meta, Tesla) that don't expose public JSON APIs.
+ * Manages a shared headless Chromium browser instance for scraping SPA career sites (Google, Apple,
+ * Microsoft, Meta, Tesla) that don't expose public JSON APIs.
  *
- * <p>The browser is created once at startup and shared across all Playwright-based scrapers.
- * Each scraper creates its own {@link com.microsoft.playwright.BrowserContext} for isolation.
+ * <p>The browser is created once at startup and shared across all Playwright-based scrapers. Each
+ * scraper creates its own {@link com.microsoft.playwright.BrowserContext} for isolation.
  */
 @Slf4j
 @Configuration
@@ -25,8 +25,7 @@ public class PlaywrightConfig {
     @Bean
     public Browser playwrightBrowser() {
         playwright = Playwright.create();
-        browser = playwright.chromium().launch(
-                new BrowserType.LaunchOptions().setHeadless(true));
+        browser = playwright.chromium().launch(new BrowserType.LaunchOptions().setHeadless(true));
         log.info("Playwright headless Chromium browser initialized");
         return browser;
     }

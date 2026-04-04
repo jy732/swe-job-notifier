@@ -51,9 +51,9 @@ public class WorkdayScraper implements JobScraper {
     /**
      * Scrapes all job postings for a Workday company via paginated API calls.
      *
-     * <p>Workday's CXS API returns jobs in pages of {@value #PAGE_SIZE}. We iterate until
-     * {@code offset >= total}. On failure mid-pagination, we return partial results rather than
-     * nothing — better to process some jobs than lose an entire company's listings.
+     * <p>Workday's CXS API returns jobs in pages of {@value #PAGE_SIZE}. We iterate until {@code
+     * offset >= total}. On failure mid-pagination, we return partial results rather than nothing —
+     * better to process some jobs than lose an entire company's listings.
      *
      * <p>Note: Workday does not provide a posted date in the search results, so {@code postedDate}
      * is always null for Workday jobs. This means the freshness filter (Tier 0) will accept all

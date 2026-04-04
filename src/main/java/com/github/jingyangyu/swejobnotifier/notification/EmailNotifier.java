@@ -53,8 +53,9 @@ public class EmailNotifier {
                         .build();
 
         if (toAddress.isBlank() || fromAddress.isBlank()) {
-            log.error("██ EMAIL NOT CONFIGURED ██ "
-                    + "toAddress={}, fromAddress={} — alerts will NOT be sent until fixed",
+            log.error(
+                    "██ EMAIL NOT CONFIGURED ██ "
+                            + "toAddress={}, fromAddress={} — alerts will NOT be sent until fixed",
                     toAddress.isBlank() ? "<MISSING>" : toAddress,
                     fromAddress.isBlank() ? "<MISSING>" : fromAddress);
         } else {

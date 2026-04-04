@@ -26,8 +26,8 @@ import org.springframework.stereotype.Service;
  *       safety net so no approved job is ever silently lost.
  * </ol>
  *
- * <p>Jobs are only marked as {@code notified=true} after the summary email is successfully sent.
- * If the email fails, they remain unnotified and will be retried in the next daily summary.
+ * <p>Jobs are only marked as {@code notified=true} after the summary email is successfully sent. If
+ * the email fails, they remain unnotified and will be retried in the next daily summary.
  */
 @Slf4j
 @Service

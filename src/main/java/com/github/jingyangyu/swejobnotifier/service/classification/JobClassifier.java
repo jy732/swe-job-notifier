@@ -12,8 +12,8 @@ import org.springframework.stereotype.Service;
 /**
  * Orchestrates job classification via Gemini with batching, rate limiting, and retry.
  *
- * <p>This class handles the "how" of classification (batching, pacing, error handling) while
- * {@link GeminiClient} handles the "what" (API calls, prompt building, response parsing).
+ * <p>This class handles the "how" of classification (batching, pacing, error handling) while {@link
+ * GeminiClient} handles the "what" (API calls, prompt building, response parsing).
  *
  * <p>Design decisions:
  *
@@ -56,7 +56,8 @@ public class JobClassifier {
             return new ClassificationResult(Collections.emptyList(), Collections.emptyList());
         }
         if (!geminiClient.isConfigured()) {
-            log.warn("Gemini API key not configured — returning all {} jobs unclassified",
+            log.warn(
+                    "Gemini API key not configured — returning all {} jobs unclassified",
                     jobs.size());
             return new ClassificationResult(jobs, Collections.emptyList());
         }
@@ -72,26 +73,41 @@ public class JobClassifier {
             processBatch(batch, batchNum, totalBatches, classified, failed);
         }
 
-        log.info("Gemini classification complete: {}/{} mid-level, {} failed",
-                classified.size(), jobs.size(), failed.size());
+        log.info(
+                "Gemini classification complete: {}/{} mid-level, {} failed",
+                classified.size(),
+                jobs.size(),
+                failed.size());
         return new ClassificationResult(classified, failed);
     }
 
     /** Classifies a single batch and appends results to classified/failed lists. */
-    private void processBatch(List<JobPosting> batch, int batchNum, int totalBatches,
-            List<JobPosting> classified, List<JobPosting> failed) {
+    private void processBatch(
+            List<JobPosting> batch,
+            int batchNum,
+            int totalBatches,
+            List<JobPosting> classified,
+            List<JobPosting> failed) {
         List<JobPosting> result = classifyBatchWithRetry(batch);
         if (result == null) {
             failed.addAll(batch);
             metrics.recordGeminiFail();
-            log.warn("Gemini batch {}/{} failed — {} job(s) will retry next poll",
-                    batchNum, totalBatches, batch.size());
+            log.warn(
+                    "Gemini batch {}/{} failed — {} job(s) will retry next poll",
+                    batchNum,
+                    totalBatches,
+                    batch.size());
         } else {
             classified.addAll(result);
             metrics.recordGeminiSuccess();
             metrics.recordJobsClassified(result.size());
-            log.info("Gemini batch {}/{}: {}/{} mid-level (running total: {})",
-                    batchNum, totalBatches, result.size(), batch.size(), classified.size());
+            log.info(
+                    "Gemini batch {}/{}: {}/{} mid-level (running total: {})",
+                    batchNum,
+                    totalBatches,
+                    result.size(),
+                    batch.size(),
+                    classified.size());
         }
     }
 
@@ -104,17 +120,22 @@ public class JobClassifier {
     private List<JobPosting> classifyBatchWithRetry(List<JobPosting> batch) {
         log.info("Classifying batch of {} job(s) via Gemini", batch.size());
         try {
-            return retryTemplate.execute(context -> {
-                if (context.getRetryCount() > 0) {
-                    metrics.recordGeminiRetry();
-                    log.warn("Gemini retry attempt {} for batch of {}",
-                            context.getRetryCount(), batch.size());
-                }
-                return geminiClient.classify(batch);
-            });
+            return retryTemplate.execute(
+                    context -> {
+                        if (context.getRetryCount() > 0) {
+                            metrics.recordGeminiRetry();
+                            log.warn(
+                                    "Gemini retry attempt {} for batch of {}",
+                                    context.getRetryCount(),
+                                    batch.size());
+                        }
+                        return geminiClient.classify(batch);
+                    });
         } catch (Exception e) {
-            log.error("Gemini classification failed after retries, skipping batch of {}",
-                    batch.size(), e);
+            log.error(
+                    "Gemini classification failed after retries, skipping batch of {}",
+                    batch.size(),
+                    e);
             return null;
         }
     }

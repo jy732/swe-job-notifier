@@ -71,9 +71,9 @@ public class JobTitleFilter {
     /**
      * Tier 1.5: Location filter with a "reject only when certain" policy.
      *
-     * <p>Design rationale: We prefer false positives (non-US job slips through) over false negatives
-     * (valid US job rejected). A false positive just wastes one Gemini API call; a false negative
-     * means the user misses a real opportunity.
+     * <p>Design rationale: We prefer false positives (non-US job slips through) over false
+     * negatives (valid US job rejected). A false positive just wastes one Gemini API call; a false
+     * negative means the user misses a real opportunity.
      *
      * <p>Detection strategy:
      *

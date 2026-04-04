@@ -19,8 +19,8 @@ import org.springframework.web.reactive.function.client.WebClient;
  * Scraper for Amazon Jobs ({@code amazon.jobs/en/search.json}).
  *
  * <p>Amazon exposes a public JSON search API with offset-based pagination. We search the
- * "software-development" category filtered to US locations, paginating in batches of
- * {@value #PAGE_SIZE} until all results are fetched.
+ * "software-development" category filtered to US locations, paginating in batches of {@value
+ * #PAGE_SIZE} until all results are fetched.
  */
 @Slf4j
 @Component
@@ -59,11 +59,14 @@ public class AmazonScraper implements JobScraper {
 
         try {
             while (true) {
-                Map<String, Object> response = webClient.get()
-                        .uri(API_URL, offset, PAGE_SIZE)
-                        .retrieve()
-                        .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {})
-                        .block();
+                Map<String, Object> response =
+                        webClient
+                                .get()
+                                .uri(API_URL, offset, PAGE_SIZE)
+                                .retrieve()
+                                .bodyToMono(
+                                        new ParameterizedTypeReference<Map<String, Object>>() {})
+                                .block();
 
                 if (response == null) {
                     break;
@@ -71,8 +74,8 @@ public class AmazonScraper implements JobScraper {
 
                 int totalHits = ((Number) response.getOrDefault("hits", 0)).intValue();
                 List<Map<String, Object>> jobs =
-                        (List<Map<String, Object>>) response.getOrDefault(
-                                "jobs", Collections.emptyList());
+                        (List<Map<String, Object>>)
+                                response.getOrDefault("jobs", Collections.emptyList());
 
                 if (jobs.isEmpty()) {
                     break;

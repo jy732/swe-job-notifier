@@ -1,7 +1,5 @@
 package com.github.jingyangyu.swejobnotifier.scraper;
 
-import tools.jackson.core.type.TypeReference;
-import tools.jackson.databind.ObjectMapper;
 import com.github.jingyangyu.swejobnotifier.model.JobPosting;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -13,14 +11,16 @@ import java.util.regex.Pattern;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * Scraper for Meta Careers via their GraphQL API.
  *
- * <p>Meta's career site fetches job data from {@code metacareers.com/graphql}. This scraper
- * calls the API directly using a two-step process: (1) fetch the job-search page to extract a
- * CSRF token ({@code lsd}), then (2) POST a GraphQL query with
- * {@code doc_id=29615178951461218} to retrieve all matching jobs in one request.
+ * <p>Meta's career site fetches job data from {@code metacareers.com/graphql}. This scraper calls
+ * the API directly using a two-step process: (1) fetch the job-search page to extract a CSRF token
+ * ({@code lsd}), then (2) POST a GraphQL query with {@code doc_id=29615178951461218} to retrieve
+ * all matching jobs in one request.
  */
 @Slf4j
 @Component
@@ -40,10 +40,15 @@ public class MetaScraper implements JobScraper {
     private final ObjectMapper objectMapper;
 
     public MetaScraper(WebClient.Builder webClientBuilder, ObjectMapper objectMapper) {
-        this.webClient = webClientBuilder
-                .defaultHeader("User-Agent", USER_AGENT)
-                .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(16 * 1024 * 1024))
-                .build();
+        this.webClient =
+                webClientBuilder
+                        .defaultHeader("User-Agent", USER_AGENT)
+                        .codecs(
+                                configurer ->
+                                        configurer
+                                                .defaultCodecs()
+                                                .maxInMemorySize(16 * 1024 * 1024))
+                        .build();
         this.objectMapper = objectMapper;
         log.info("Meta scraper initialized (GraphQL API)");
     }
@@ -72,43 +77,52 @@ public class MetaScraper implements JobScraper {
             log.debug("Meta: obtained LSD token");
 
             // Step 2: Call GraphQL API
-            String variables = "{\"search_input\":{"
-                    + "\"q\":\"software engineer\","
-                    + "\"divisions\":[],\"offices\":[],\"roles\":[],"
-                    + "\"leadership_levels\":[],\"saved_jobs\":[],"
-                    + "\"saved_searches\":[],\"sub_teams\":[],\"teams\":[],"
-                    + "\"is_leadership\":false,\"is_remote_only\":false,"
-                    + "\"sort_by_new\":false,\"results_per_page\":null}}";
+            String variables =
+                    "{\"search_input\":{"
+                            + "\"q\":\"software engineer\","
+                            + "\"divisions\":[],\"offices\":[],\"roles\":[],"
+                            + "\"leadership_levels\":[],\"saved_jobs\":[],"
+                            + "\"saved_searches\":[],\"sub_teams\":[],\"teams\":[],"
+                            + "\"is_leadership\":false,\"is_remote_only\":false,"
+                            + "\"sort_by_new\":false,\"results_per_page\":null}}";
 
-            String formBody = "lsd=" + lsd
-                    + "&fb_api_caller_class=RelayModern"
-                    + "&fb_api_req_friendly_name=CareersJobSearchResultsDataQuery"
-                    + "&variables=" + urlEncode(variables)
-                    + "&doc_id=" + DOC_ID;
+            String formBody =
+                    "lsd="
+                            + lsd
+                            + "&fb_api_caller_class=RelayModern"
+                            + "&fb_api_req_friendly_name=CareersJobSearchResultsDataQuery"
+                            + "&variables="
+                            + urlEncode(variables)
+                            + "&doc_id="
+                            + DOC_ID;
 
-            String rawResponse = webClient.post()
-                    .uri(GRAPHQL_URL)
-                    .header("Content-Type", "application/x-www-form-urlencoded")
-                    .header("Origin", "https://www.metacareers.com")
-                    .header("Referer", "https://www.metacareers.com/jobsearch")
-                    .header("Sec-Fetch-Dest", "empty")
-                    .header("Sec-Fetch-Mode", "cors")
-                    .header("Sec-Fetch-Site", "same-origin")
-                    .header("x-fb-lsd", lsd)
-                    .header("Accept", "*/*")
-                    .bodyValue(formBody)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .block();
+            String rawResponse =
+                    webClient
+                            .post()
+                            .uri(GRAPHQL_URL)
+                            .header("Content-Type", "application/x-www-form-urlencoded")
+                            .header("Origin", "https://www.metacareers.com")
+                            .header("Referer", "https://www.metacareers.com/jobsearch")
+                            .header("Sec-Fetch-Dest", "empty")
+                            .header("Sec-Fetch-Mode", "cors")
+                            .header("Sec-Fetch-Site", "same-origin")
+                            .header("x-fb-lsd", lsd)
+                            .header("Accept", "*/*")
+                            .bodyValue(formBody)
+                            .retrieve()
+                            .bodyToMono(String.class)
+                            .block();
 
             if (rawResponse == null || !rawResponse.trim().startsWith("{")) {
-                log.warn("Meta: non-JSON GraphQL response (length={})",
+                log.warn(
+                        "Meta: non-JSON GraphQL response (length={})",
                         rawResponse != null ? rawResponse.length() : 0);
                 return allJobs;
             }
 
-            Map<String, Object> response = objectMapper.readValue(
-                    rawResponse, new TypeReference<Map<String, Object>>() {});
+            Map<String, Object> response =
+                    objectMapper.readValue(
+                            rawResponse, new TypeReference<Map<String, Object>>() {});
 
             // Check for errors
             if (response.containsKey("errors")) {
@@ -126,16 +140,17 @@ public class MetaScraper implements JobScraper {
                 List<String> locations = (List<String>) job.get("locations");
                 String location = locations != null ? String.join("; ", locations) : "";
 
-                allJobs.add(JobPosting.builder()
-                        .company("meta")
-                        .externalId(id)
-                        .title(title)
-                        .url("https://www.metacareers.com/profile/job_details/" + id)
-                        .location(location)
-                        .description("")
-                        .postedDate(null)
-                        .detectedAt(Instant.now())
-                        .build());
+                allJobs.add(
+                        JobPosting.builder()
+                                .company("meta")
+                                .externalId(id)
+                                .title(title)
+                                .url("https://www.metacareers.com/profile/job_details/" + id)
+                                .location(location)
+                                .description("")
+                                .postedDate(null)
+                                .detectedAt(Instant.now())
+                                .build());
             }
         } catch (Exception e) {
             log.error("Failed to scrape Meta careers", e);
@@ -147,15 +162,17 @@ public class MetaScraper implements JobScraper {
 
     private String fetchLsdToken() {
         try {
-            String html = webClient.get()
-                    .uri(PAGE_URL)
-                    .header("Sec-Fetch-Dest", "document")
-                    .header("Sec-Fetch-Mode", "navigate")
-                    .header("Sec-Fetch-Site", "none")
-                    .header("Sec-Fetch-User", "?1")
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .block();
+            String html =
+                    webClient
+                            .get()
+                            .uri(PAGE_URL)
+                            .header("Sec-Fetch-Dest", "document")
+                            .header("Sec-Fetch-Mode", "navigate")
+                            .header("Sec-Fetch-Site", "none")
+                            .header("Sec-Fetch-User", "?1")
+                            .retrieve()
+                            .bodyToMono(String.class)
+                            .block();
             if (html == null) return null;
             Matcher m = LSD_PATTERN.matcher(html);
             return m.find() ? m.group(1) : null;
@@ -173,8 +190,7 @@ public class MetaScraper implements JobScraper {
             Map<String, Object> search =
                     (Map<String, Object>) data.get("job_search_with_featured_jobs");
             if (search == null) return Collections.emptyList();
-            List<Map<String, Object>> jobs =
-                    (List<Map<String, Object>>) search.get("all_jobs");
+            List<Map<String, Object>> jobs = (List<Map<String, Object>>) search.get("all_jobs");
             return jobs != null ? jobs : Collections.emptyList();
         } catch (Exception e) {
             log.warn("Meta: unexpected response structure: {}", response.keySet());

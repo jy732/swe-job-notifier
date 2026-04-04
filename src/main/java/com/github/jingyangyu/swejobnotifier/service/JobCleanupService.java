@@ -38,6 +38,9 @@ public class JobCleanupService {
         int deleted = repository.deleteByPostedDateBefore(cutoff);
 
         long elapsed = System.currentTimeMillis() - startTime;
-        log.info("=== JOB CLEANUP COMPLETE === deleted={} stale job(s), elapsed={}ms", deleted, elapsed);
+        log.info(
+                "=== JOB CLEANUP COMPLETE === deleted={} stale job(s), elapsed={}ms",
+                deleted,
+                elapsed);
     }
 }

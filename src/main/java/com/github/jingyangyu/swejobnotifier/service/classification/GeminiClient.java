@@ -51,8 +51,9 @@ public class GeminiClient {
         this.model = model;
 
         if (apiKey == null || apiKey.isBlank()) {
-            log.error("██ GEMINI API KEY NOT CONFIGURED ██ "
-                    + "— all jobs will bypass classification (no filtering by level)");
+            log.error(
+                    "██ GEMINI API KEY NOT CONFIGURED ██ "
+                            + "— all jobs will bypass classification (no filtering by level)");
         } else {
             log.info("Gemini configured: model={}", model);
         }
@@ -81,8 +82,10 @@ public class GeminiClient {
         for (int i = 0; i < batch.size(); i++) {
             JobPosting job = batch.get(i);
             String desc = job.getDescription() != null ? job.getDescription() : "";
-            String snippet = desc.length() > DESC_SNIPPET_LENGTH
-                    ? desc.substring(0, DESC_SNIPPET_LENGTH) : desc;
+            String snippet =
+                    desc.length() > DESC_SNIPPET_LENGTH
+                            ? desc.substring(0, DESC_SNIPPET_LENGTH)
+                            : desc;
             sb.append(String.format("%d. Title: %s\n", i + 1, job.getTitle()));
             sb.append(String.format("   Description: %s\n\n", snippet));
         }
@@ -95,12 +98,17 @@ public class GeminiClient {
                         "system_instruction",
                         Map.of("parts", List.of(Map.of("text", SYSTEM_PROMPT))),
                         "contents",
-                        List.of(Map.of("role", "user",
-                                "parts", List.of(Map.of("text", userPrompt)))));
+                        List.of(
+                                Map.of(
+                                        "role",
+                                        "user",
+                                        "parts",
+                                        List.of(Map.of("text", userPrompt)))));
 
-        String url = String.format(
-                "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s",
-                model, apiKey);
+        String url =
+                String.format(
+                        "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s",
+                        model, apiKey);
 
         return webClient
                 .post()
@@ -152,7 +160,8 @@ public class GeminiClient {
                     }
                 }
             }
-            log.info("Gemini classified {}/{} job(s) as mid-level SWE", result.size(), batch.size());
+            log.info(
+                    "Gemini classified {}/{} job(s) as mid-level SWE", result.size(), batch.size());
             return result;
         } catch (Exception e) {
             log.warn("Failed to parse Gemini response", e);

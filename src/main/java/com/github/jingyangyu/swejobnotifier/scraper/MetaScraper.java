@@ -1,5 +1,7 @@
 package com.github.jingyangyu.swejobnotifier.scraper;
 
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 import com.github.jingyangyu.swejobnotifier.model.JobPosting;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -9,8 +11,6 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.core.ParameterizedTypeReference;
-import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 
@@ -37,11 +37,14 @@ public class MetaScraper implements JobScraper {
                     + "Chrome/136.0.0.0 Safari/537.36";
 
     private final WebClient webClient;
+    private final ObjectMapper objectMapper;
 
-    public MetaScraper(WebClient.Builder webClientBuilder) {
+    public MetaScraper(WebClient.Builder webClientBuilder, ObjectMapper objectMapper) {
         this.webClient = webClientBuilder
                 .defaultHeader("User-Agent", USER_AGENT)
+                .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(16 * 1024 * 1024))
                 .build();
+        this.objectMapper = objectMapper;
         log.info("Meta scraper initialized (GraphQL API)");
     }
 
@@ -83,7 +86,7 @@ public class MetaScraper implements JobScraper {
                     + "&variables=" + urlEncode(variables)
                     + "&doc_id=" + DOC_ID;
 
-            Map<String, Object> response = webClient.post()
+            String rawResponse = webClient.post()
                     .uri(GRAPHQL_URL)
                     .header("Content-Type", "application/x-www-form-urlencoded")
                     .header("Origin", "https://www.metacareers.com")
@@ -92,15 +95,20 @@ public class MetaScraper implements JobScraper {
                     .header("Sec-Fetch-Mode", "cors")
                     .header("Sec-Fetch-Site", "same-origin")
                     .header("x-fb-lsd", lsd)
+                    .header("Accept", "*/*")
                     .bodyValue(formBody)
                     .retrieve()
-                    .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {})
+                    .bodyToMono(String.class)
                     .block();
 
-            if (response == null) {
-                log.warn("Meta: null GraphQL response");
+            if (rawResponse == null || !rawResponse.trim().startsWith("{")) {
+                log.warn("Meta: non-JSON GraphQL response (length={})",
+                        rawResponse != null ? rawResponse.length() : 0);
                 return allJobs;
             }
+
+            Map<String, Object> response = objectMapper.readValue(
+                    rawResponse, new TypeReference<Map<String, Object>>() {});
 
             // Check for errors
             if (response.containsKey("errors")) {

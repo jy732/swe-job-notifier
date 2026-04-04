@@ -1,38 +1,42 @@
 package com.github.jingyangyu.swejobnotifier.scraper;
 
 import com.github.jingyangyu.swejobnotifier.model.JobPosting;
-import com.microsoft.playwright.Browser;
-import com.microsoft.playwright.BrowserContext;
-import com.microsoft.playwright.Page;
-import com.microsoft.playwright.options.WaitUntilState;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Component;
+import org.springframework.web.reactive.function.client.WebClient;
 
 /**
- * Scraper for Microsoft Careers ({@code jobs.careers.microsoft.com}).
+ * Scraper for Microsoft Careers via the PCSX search API.
  *
- * <p>Microsoft's career site is an SPA backed by Solr/Elasticsearch. This scraper uses Playwright
- * to render search results and extract job cards from the DOM.
+ * <p>Microsoft migrated from {@code jobs.careers.microsoft.com} to {@code
+ * apply.careers.microsoft.com} which exposes a public JSON search API at {@code /api/pcsx/search}.
+ * This scraper calls that API directly — no browser needed.
  */
 @Slf4j
 @Component
 public class MicrosoftScraper implements JobScraper {
 
     private static final String SEARCH_URL =
-            "https://jobs.careers.microsoft.com/global/en/search"
-                    + "?q=software+engineer&lc=United+States&l=en_us&pg=%d&pgSz=20"
-                    + "&o=Relevance&flt=true";
-    private static final int MAX_PAGES = 10;
+            "https://apply.careers.microsoft.com/api/pcsx/search"
+                    + "?domain=microsoft.com"
+                    + "&query=software+engineer"
+                    + "&location=United+States"
+                    + "&start={start}";
+    private static final String JOB_URL_PREFIX = "https://apply.careers.microsoft.com";
+    private static final int PAGE_SIZE = 10;
+    private static final int MAX_RESULTS = 200;
 
-    private final Browser browser;
+    private final WebClient webClient;
 
-    public MicrosoftScraper(Browser browser) {
-        this.browser = browser;
-        log.info("Microsoft scraper initialized (Playwright)");
+    public MicrosoftScraper(WebClient.Builder webClientBuilder) {
+        this.webClient = webClientBuilder.build();
+        log.info("Microsoft scraper initialized (PCSX API)");
     }
 
     @Override
@@ -49,84 +53,76 @@ public class MicrosoftScraper implements JobScraper {
     public List<JobPosting> scrape(String company) {
         List<JobPosting> allJobs = new ArrayList<>();
 
-        try (BrowserContext context = browser.newContext()) {
-            Page page = context.newPage();
+        try {
+            for (int start = 0; start < MAX_RESULTS; start += PAGE_SIZE) {
+                Map<String, Object> response =
+                        webClient
+                                .get()
+                                .uri(SEARCH_URL, start)
+                                .retrieve()
+                                .bodyToMono(
+                                        new ParameterizedTypeReference<Map<String, Object>>() {})
+                                .block();
 
-            for (int pageNum = 1; pageNum <= MAX_PAGES; pageNum++) {
-                String url = String.format(SEARCH_URL, pageNum);
-                page.navigate(
-                        url, new Page.NavigateOptions().setWaitUntil(WaitUntilState.NETWORKIDLE));
-
-                try {
-                    page.waitForSelector(
-                            "[class*='ms-List-cell'], [class*='job-card'], "
-                                    + "[data-automation-id*='job']",
-                            new Page.WaitForSelectorOptions().setTimeout(15000));
-                } catch (Exception e) {
-                    log.debug("Microsoft page {}: no job cards found, stopping", pageNum);
+                List<Map<String, Object>> positions = extractPositions(response);
+                if (positions.isEmpty()) {
+                    log.debug("Microsoft start={}: no positions returned, stopping", start);
                     break;
                 }
 
-                @SuppressWarnings("unchecked")
-                List<Map<String, String>> jobs =
-                        (List<Map<String, String>>)
-                                page.evaluate(
-                                        "() => {\n"
-                                                + "  const results = [];\n"
-                                                + "  const cards = document.querySelectorAll("
-                                                + "'[class*=\"ms-List-cell\"], [class*=\"job-card\"],"
-                                                + " [role=\"listitem\"]');\n"
-                                                + "  cards.forEach(card => {\n"
-                                                + "    const link = card.querySelector("
-                                                + "'a[href*=\"/job/\"], a[href*=\"/global/en/job/\"]');\n"
-                                                + "    if (!link) return;\n"
-                                                + "    const href = link.getAttribute('href') || '';\n"
-                                                + "    const idMatch = href.match(/\\/job\\/(\\d+)/);\n"
-                                                + "    const title = link.textContent.trim()"
-                                                + " || card.querySelector('h2,h3')?.textContent?.trim() || '';\n"
-                                                + "    const locEl = card.querySelector("
-                                                + "'[class*=\"location\"], [aria-label*=\"location\"]');\n"
-                                                + "    const dateEl = card.querySelector("
-                                                + "'[class*=\"date\"], [class*=\"posted\"]');\n"
-                                                + "    results.push({\n"
-                                                + "      id: idMatch ? idMatch[1] : href,\n"
-                                                + "      title: title,\n"
-                                                + "      url: href.startsWith('http') ? href"
-                                                + " : 'https://jobs.careers.microsoft.com' + href,\n"
-                                                + "      location: locEl ? locEl.textContent.trim() : '',\n"
-                                                + "      date: dateEl ? dateEl.textContent.trim() : ''\n"
-                                                + "    });\n"
-                                                + "  });\n"
-                                                + "  return results;\n"
-                                                + "}");
+                for (Map<String, Object> pos : positions) {
+                    allJobs.add(toJobPosting(pos));
+                }
 
-                if (jobs == null || jobs.isEmpty()) {
-                    log.debug("Microsoft page {}: no jobs extracted, stopping", pageNum);
+                log.debug("Microsoft start={}: extracted {} jobs", start, positions.size());
+
+                if (positions.size() < PAGE_SIZE) {
                     break;
                 }
-
-                for (Map<String, String> job : jobs) {
-                    allJobs.add(
-                            JobPosting.builder()
-                                    .company("microsoft")
-                                    .externalId(job.getOrDefault("id", ""))
-                                    .title(job.getOrDefault("title", ""))
-                                    .url(job.getOrDefault("url", ""))
-                                    .location(job.getOrDefault("location", ""))
-                                    .description("")
-                                    .postedDate(null)
-                                    .detectedAt(Instant.now())
-                                    .build());
-                }
-
-                log.debug("Microsoft page {}: extracted {} jobs", pageNum, jobs.size());
             }
-
-            log.info("Microsoft: scraped {} total job(s)", allJobs.size());
-            return allJobs;
         } catch (Exception e) {
             log.error("Failed to scrape Microsoft careers", e);
-            return allJobs;
         }
+
+        log.info("Microsoft: scraped {} total job(s)", allJobs.size());
+        return allJobs;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> extractPositions(Map<String, Object> response) {
+        if (response == null) return Collections.emptyList();
+        Map<String, Object> data = (Map<String, Object>) response.get("data");
+        if (data == null) return Collections.emptyList();
+        List<Map<String, Object>> positions = (List<Map<String, Object>>) data.get("positions");
+        return positions != null ? positions : Collections.emptyList();
+    }
+
+    @SuppressWarnings("unchecked")
+    private JobPosting toJobPosting(Map<String, Object> pos) {
+        String id = String.valueOf(pos.getOrDefault("displayJobId", pos.getOrDefault("id", "")));
+        String title = String.valueOf(pos.getOrDefault("name", ""));
+        String posUrl = String.valueOf(pos.getOrDefault("positionUrl", ""));
+        String url = posUrl.startsWith("http") ? posUrl : JOB_URL_PREFIX + posUrl;
+
+        List<String> locations =
+                (List<String>) pos.getOrDefault("standardizedLocations", Collections.emptyList());
+        String location = String.join("; ", locations);
+
+        Instant postedDate = null;
+        Object postedTs = pos.get("postedTs");
+        if (postedTs instanceof Number num) {
+            postedDate = Instant.ofEpochSecond(num.longValue());
+        }
+
+        return JobPosting.builder()
+                .company("microsoft")
+                .externalId(id)
+                .title(title)
+                .url(url)
+                .location(location)
+                .description("")
+                .postedDate(postedDate)
+                .detectedAt(Instant.now())
+                .build();
     }
 }

@@ -1,39 +1,48 @@
 package com.github.jingyangyu.swejobnotifier.scraper;
 
 import com.github.jingyangyu.swejobnotifier.model.JobPosting;
-import com.microsoft.playwright.Browser;
-import com.microsoft.playwright.BrowserContext;
-import com.microsoft.playwright.Page;
-import com.microsoft.playwright.options.WaitUntilState;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
+import org.springframework.web.reactive.function.client.WebClient;
 
 /**
- * Scraper for Meta Careers ({@code metacareers.com/jobsearch}).
+ * Scraper for Meta Careers via their GraphQL API.
  *
- * <p>Meta's career site now uses {@code /jobsearch} for public access and job detail links
- * follow the pattern {@code /profile/job_details/<id>}.
+ * <p>Meta's career site fetches job data from {@code metacareers.com/graphql}. This scraper
+ * calls the API directly using a two-step process: (1) fetch the job-search page to extract a
+ * CSRF token ({@code lsd}), then (2) POST a GraphQL query with
+ * {@code doc_id=29615178951461218} to retrieve all matching jobs in one request.
  */
 @Slf4j
 @Component
 public class MetaScraper implements JobScraper {
 
-    private static final String SEARCH_URL =
-            "https://www.metacareers.com/jobsearch?q=software+engineer&page=%d";
-    private static final int MAX_PAGES = 30;
+    private static final String PAGE_URL = "https://www.metacareers.com/jobsearch";
+    private static final String GRAPHQL_URL = "https://www.metacareers.com/graphql";
+    private static final String DOC_ID = "29615178951461218";
+    private static final Pattern LSD_PATTERN =
+            Pattern.compile("\"LSD\",\\[],\\{\"token\":\"([^\"]+)\"");
     private static final String USER_AGENT =
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                    + "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
+                    + "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    + "Chrome/136.0.0.0 Safari/537.36";
 
-    private final Browser browser;
+    private final WebClient webClient;
 
-    public MetaScraper(Browser browser) {
-        this.browser = browser;
-        log.info("Meta scraper initialized (Playwright)");
+    public MetaScraper(WebClient.Builder webClientBuilder) {
+        this.webClient = webClientBuilder
+                .defaultHeader("User-Agent", USER_AGENT)
+                .build();
+        log.info("Meta scraper initialized (GraphQL API)");
     }
 
     @Override
@@ -49,94 +58,127 @@ public class MetaScraper implements JobScraper {
     @Override
     public List<JobPosting> scrape(String company) {
         List<JobPosting> allJobs = new ArrayList<>();
-        java.util.Set<String> seenIds = new java.util.HashSet<>();
 
-        try (BrowserContext context = browser.newContext(
-                new Browser.NewContextOptions().setUserAgent(USER_AGENT))) {
-            Page page = context.newPage();
+        try {
+            // Step 1: Fetch the page to get the LSD (CSRF) token
+            String lsd = fetchLsdToken();
+            if (lsd == null) {
+                log.warn("Meta: could not extract LSD token, skipping");
+                return allJobs;
+            }
+            log.debug("Meta: obtained LSD token");
 
-            for (int pageNum = 1; pageNum <= MAX_PAGES; pageNum++) {
-                String url = String.format(SEARCH_URL, pageNum);
-                page.navigate(url, new Page.NavigateOptions()
-                        .setWaitUntil(WaitUntilState.NETWORKIDLE)
-                        .setTimeout(30000));
+            // Step 2: Call GraphQL API
+            String variables = "{\"search_input\":{"
+                    + "\"q\":\"software engineer\","
+                    + "\"divisions\":[],\"offices\":[],\"roles\":[],"
+                    + "\"leadership_levels\":[],\"saved_jobs\":[],"
+                    + "\"saved_searches\":[],\"sub_teams\":[],\"teams\":[],"
+                    + "\"is_leadership\":false,\"is_remote_only\":false,"
+                    + "\"sort_by_new\":false,\"results_per_page\":null}}";
 
-                // Wait for job detail links
-                try {
-                    page.waitForSelector("a[href*='/profile/job_details/']",
-                            new Page.WaitForSelectorOptions().setTimeout(15000));
-                } catch (Exception e) {
-                    log.debug("Meta page {}: no job links found, stopping", pageNum);
-                    break;
-                }
+            String formBody = "lsd=" + lsd
+                    + "&fb_api_caller_class=RelayModern"
+                    + "&fb_api_req_friendly_name=CareersJobSearchResultsDataQuery"
+                    + "&variables=" + urlEncode(variables)
+                    + "&doc_id=" + DOC_ID;
 
-                @SuppressWarnings("unchecked")
-                List<Map<String, String>> jobs = (List<Map<String, String>>) page.evaluate(
-                        "() => {\n"
-                        + "  const results = [];\n"
-                        + "  const seen = new Set();\n"
-                        + "  const links = document.querySelectorAll("
-                        + "\"a[href*='/profile/job_details/']\");\n"
-                        + "  links.forEach(link => {\n"
-                        + "    const href = link.getAttribute('href') || '';\n"
-                        + "    const idMatch = href.match(/job_details\\/(\\d+)/);\n"
-                        + "    if (!idMatch || seen.has(idMatch[1])) return;\n"
-                        + "    seen.add(idMatch[1]);\n"
-                        + "    const fullText = link.innerText || '';\n"
-                        + "    const lines = fullText.split('\\n')"
-                        + ".map(l => l.trim()).filter(l => l);\n"
-                        + "    const title = lines[0] || '';\n"
-                        + "    let location = '';\n"
-                        + "    for (let i = 1; i < lines.length; i++) {\n"
-                        + "      if (lines[i].includes(',') && lines[i].length < 80"
-                        + " && !lines[i].includes('⋅')"
-                        + " && !lines[i].includes('+')) {\n"
-                        + "        location = lines[i]; break;\n"
-                        + "      }\n"
-                        + "    }\n"
-                        + "    if (!title || title.length < 3) return;\n"
-                        + "    results.push({\n"
-                        + "      id: idMatch[1],\n"
-                        + "      title: title,\n"
-                        + "      url: 'https://www.metacareers.com' + href,\n"
-                        + "      location: location\n"
-                        + "    });\n"
-                        + "  });\n"
-                        + "  return results;\n"
-                        + "}");
+            Map<String, Object> response = webClient.post()
+                    .uri(GRAPHQL_URL)
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .header("Origin", "https://www.metacareers.com")
+                    .header("Referer", "https://www.metacareers.com/jobsearch")
+                    .header("Sec-Fetch-Dest", "empty")
+                    .header("Sec-Fetch-Mode", "cors")
+                    .header("Sec-Fetch-Site", "same-origin")
+                    .header("x-fb-lsd", lsd)
+                    .bodyValue(formBody)
+                    .retrieve()
+                    .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {})
+                    .block();
 
-                if (jobs == null || jobs.isEmpty()) {
-                    log.debug("Meta page {}: no jobs extracted, stopping", pageNum);
-                    break;
-                }
-
-                int newCount = 0;
-                for (Map<String, String> job : jobs) {
-                    String id = job.getOrDefault("id", "");
-                    if (seenIds.contains(id)) continue;
-                    seenIds.add(id);
-                    newCount++;
-                    allJobs.add(JobPosting.builder()
-                            .company("meta")
-                            .externalId(id)
-                            .title(job.getOrDefault("title", ""))
-                            .url(job.getOrDefault("url", ""))
-                            .location(job.getOrDefault("location", ""))
-                            .description("")
-                            .postedDate(null)
-                            .detectedAt(Instant.now())
-                            .build());
-                }
-
-                log.debug("Meta page {}: extracted {} new jobs", pageNum, newCount);
-                if (newCount == 0) break;
+            if (response == null) {
+                log.warn("Meta: null GraphQL response");
+                return allJobs;
             }
 
-            log.info("Meta: scraped {} total job(s)", allJobs.size());
-            return allJobs;
+            // Check for errors
+            if (response.containsKey("errors")) {
+                log.warn("Meta: GraphQL errors: {}", response.get("errors"));
+                return allJobs;
+            }
+
+            // Extract jobs from response
+            List<Map<String, Object>> jobs = extractJobs(response);
+            for (Map<String, Object> job : jobs) {
+                String id = String.valueOf(job.getOrDefault("id", ""));
+                String title = String.valueOf(job.getOrDefault("title", ""));
+
+                @SuppressWarnings("unchecked")
+                List<String> locations = (List<String>) job.get("locations");
+                String location = locations != null ? String.join("; ", locations) : "";
+
+                allJobs.add(JobPosting.builder()
+                        .company("meta")
+                        .externalId(id)
+                        .title(title)
+                        .url("https://www.metacareers.com/profile/job_details/" + id)
+                        .location(location)
+                        .description("")
+                        .postedDate(null)
+                        .detectedAt(Instant.now())
+                        .build());
+            }
         } catch (Exception e) {
             log.error("Failed to scrape Meta careers", e);
-            return allJobs;
+        }
+
+        log.info("Meta: scraped {} total job(s)", allJobs.size());
+        return allJobs;
+    }
+
+    private String fetchLsdToken() {
+        try {
+            String html = webClient.get()
+                    .uri(PAGE_URL)
+                    .header("Sec-Fetch-Dest", "document")
+                    .header("Sec-Fetch-Mode", "navigate")
+                    .header("Sec-Fetch-Site", "none")
+                    .header("Sec-Fetch-User", "?1")
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .block();
+            if (html == null) return null;
+            Matcher m = LSD_PATTERN.matcher(html);
+            return m.find() ? m.group(1) : null;
+        } catch (Exception e) {
+            log.error("Meta: failed to fetch LSD token", e);
+            return null;
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> extractJobs(Map<String, Object> response) {
+        try {
+            Map<String, Object> data = (Map<String, Object>) response.get("data");
+            if (data == null) return Collections.emptyList();
+            Map<String, Object> search =
+                    (Map<String, Object>) data.get("job_search_with_featured_jobs");
+            if (search == null) return Collections.emptyList();
+            List<Map<String, Object>> jobs =
+                    (List<Map<String, Object>>) search.get("all_jobs");
+            return jobs != null ? jobs : Collections.emptyList();
+        } catch (Exception e) {
+            log.warn("Meta: unexpected response structure: {}", response.keySet());
+            return Collections.emptyList();
+        }
+    }
+
+    private static String urlEncode(String value) {
+        try {
+            return java.net.URLEncoder.encode(value, "UTF-8");
+        } catch (Exception e) {
+            return value;
         }
     }
 }

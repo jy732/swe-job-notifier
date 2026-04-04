@@ -87,12 +87,29 @@ public class ScrapeTestController {
                         .setViewportSize(1920, 1080))) {
             Page page = context.newPage();
 
-            // Capture API/XHR requests during page load
+            // Capture API/XHR requests during page load (with POST bodies + headers)
             List<String> apiRequests = new java.util.concurrent.CopyOnWriteArrayList<>();
             page.onRequest(request -> {
                 String reqUrl = request.url();
-                if (reqUrl.contains("api") || reqUrl.contains("graphql")
-                        || reqUrl.contains("search") || reqUrl.contains("job")) {
+                if (reqUrl.contains("graphql")) {
+                    String postData = request.postData() != null
+                            ? request.postData().substring(0,
+                                    Math.min(request.postData().length(), 2000))
+                            : "";
+                    Map<String, String> headers = request.headers();
+                    StringBuilder sb = new StringBuilder();
+                    sb.append(request.method()).append(" ").append(reqUrl).append("\n");
+                    headers.forEach((k, v) -> {
+                        if (k.startsWith("x-") || k.equals("content-type")
+                                || k.equals("cookie")) {
+                            sb.append("  ").append(k).append(": ").append(
+                                    v.substring(0, Math.min(v.length(), 200))).append("\n");
+                        }
+                    });
+                    sb.append("  BODY: ").append(postData);
+                    apiRequests.add(sb.toString());
+                } else if (reqUrl.contains("api") || reqUrl.contains("search")
+                        || reqUrl.contains("job")) {
                     apiRequests.add(request.method() + " " + reqUrl);
                 }
             });

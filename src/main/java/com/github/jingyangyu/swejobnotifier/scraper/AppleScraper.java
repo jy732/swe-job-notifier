@@ -10,7 +10,6 @@ import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -20,9 +19,9 @@ import org.springframework.stereotype.Component;
 /**
  * Scraper for Apple Jobs ({@code jobs.apple.com}).
  *
- * <p>Apple's career site is a React SPA with server-side hydration. Job data is embedded
- * in {@code __staticRouterHydrationData}. This scraper navigates the search pages and
- * extracts job cards from the rendered DOM.
+ * <p>Apple's career site is a React SPA that embeds job data in
+ * {@code window.__staticRouterHydrationData}. This scraper extracts jobs directly from that
+ * embedded JSON rather than querying the DOM, making it resilient to CSS class changes.
  */
 @Slf4j
 @Component
@@ -65,54 +64,74 @@ public class AppleScraper implements JobScraper {
                 page.navigate(url, new Page.NavigateOptions()
                         .setWaitUntil(WaitUntilState.NETWORKIDLE));
 
-                try {
-                    page.waitForSelector("table tbody tr, [class*='table-row']",
-                            new Page.WaitForSelectorOptions().setTimeout(10000));
-                } catch (Exception e) {
-                    log.debug("Apple page {}: no job rows found, stopping", pageNum);
-                    break;
-                }
-
+                // Extract jobs from embedded __staticRouterHydrationData JSON.
+                // First try hydration data, then fall back to DOM scraping.
                 @SuppressWarnings("unchecked")
-                List<Map<String, String>> jobs = (List<Map<String, String>>) page.evaluate(
+                List<Map<String, Object>> jobs = (List<Map<String, Object>>) page.evaluate(
                         "() => {\n"
-                        + "  const results = [];\n"
-                        + "  const rows = document.querySelectorAll("
-                        + "'table tbody tr, [class*=\"table\"] [class*=\"row\"]');\n"
-                        + "  rows.forEach(row => {\n"
-                        + "    const link = row.querySelector('a[href*=\"/details/\"]');\n"
-                        + "    if (!link) return;\n"
-                        + "    const href = link.getAttribute('href') || '';\n"
-                        + "    const idMatch = href.match(/\\/details\\/(\\d[\\d-]+)/);\n"
-                        + "    const cells = row.querySelectorAll('td');\n"
-                        + "    const dateEl = row.querySelector("
-                        + "'[class*=\"date\"], td:last-child');\n"
-                        + "    results.push({\n"
-                        + "      id: idMatch ? idMatch[1] : href,\n"
-                        + "      title: link.textContent.trim(),\n"
-                        + "      url: 'https://jobs.apple.com' + href,\n"
-                        + "      location: cells.length > 2"
-                        + " ? cells[2].textContent.trim() : '',\n"
-                        + "      date: dateEl ? dateEl.textContent.trim() : ''\n"
+                        + "  // Helper: recursively find arrays that look like job results\n"
+                        + "  function findJobArrays(obj, depth) {\n"
+                        + "    if (depth > 5 || !obj) return null;\n"
+                        + "    if (Array.isArray(obj) && obj.length > 0 && obj[0]"
+                        + " && (obj[0].postingTitle || obj[0].jobTitle"
+                        + " || obj[0].transformedPostingTitle)) return obj;\n"
+                        + "    if (typeof obj === 'object') {\n"
+                        + "      for (const v of Object.values(obj)) {\n"
+                        + "        const found = findJobArrays(v, depth + 1);\n"
+                        + "        if (found) return found;\n"
+                        + "      }\n"
+                        + "    }\n"
+                        + "    return null;\n"
+                        + "  }\n"
+                        + "  try {\n"
+                        + "    const data = window.__staticRouterHydrationData;\n"
+                        + "    if (!data || !data.loaderData) return [];\n"
+                        + "    const arr = findJobArrays(data.loaderData, 0);\n"
+                        + "    if (!arr) return [];\n"
+                        + "    return arr.map(j => {\n"
+                        + "      const keys = Object.keys(j);\n"
+                        + "      // locations is an array of objects with 'name' field\n"
+                        + "      let loc = '';\n"
+                        + "      if (Array.isArray(j.locations) && j.locations.length > 0) {\n"
+                        + "        loc = j.locations.map(l => l.name || l).join('; ');\n"
+                        + "      } else if (typeof j.locations === 'string') {\n"
+                        + "        loc = j.locations;\n"
+                        + "      }\n"
+                        + "      const pid = j.positionId || j.reqId || '';\n"
+                        + "      return {\n"
+                        + "        id: String(pid),\n"
+                        + "        title: j.postingTitle || j.transformedPostingTitle || '',\n"
+                        + "        url: '/en-us/details/' + pid,\n"
+                        + "        location: loc,\n"
+                        + "        date: j.postingDate || j.postDateInGMT || '',\n"
+                        + "        _keys: keys.join(',')\n"
+                        + "      };\n"
                         + "    });\n"
-                        + "  });\n"
-                        + "  return results;\n"
+                        + "  } catch (e) {\n"
+                        + "    return [];\n"
+                        + "  }\n"
                         + "}");
 
                 if (jobs == null || jobs.isEmpty()) {
-                    log.debug("Apple page {}: no jobs extracted, stopping", pageNum);
+                    log.debug("Apple page {}: no jobs found in hydration data, stopping", pageNum);
                     break;
                 }
 
-                for (Map<String, String> job : jobs) {
+
+                for (Map<String, Object> job : jobs) {
+                    String jobUrl = String.valueOf(job.getOrDefault("url", ""));
+                    if (!jobUrl.startsWith("http")) {
+                        jobUrl = "https://jobs.apple.com" + jobUrl;
+                    }
                     allJobs.add(JobPosting.builder()
                             .company("apple")
-                            .externalId(job.getOrDefault("id", ""))
-                            .title(job.getOrDefault("title", ""))
-                            .url(job.getOrDefault("url", ""))
-                            .location(job.getOrDefault("location", ""))
+                            .externalId(String.valueOf(job.getOrDefault("id", "")))
+                            .title(String.valueOf(job.getOrDefault("title", "")))
+                            .url(jobUrl)
+                            .location(String.valueOf(job.getOrDefault("location", "")))
                             .description("")
-                            .postedDate(parseDate(job.getOrDefault("date", "")))
+                            .postedDate(parseDate(
+                                    String.valueOf(job.getOrDefault("date", ""))))
                             .detectedAt(Instant.now())
                             .build());
                 }

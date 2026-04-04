@@ -7,7 +7,6 @@ import com.microsoft.playwright.Page;
 import com.microsoft.playwright.options.WaitUntilState;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
@@ -16,16 +15,19 @@ import org.springframework.stereotype.Component;
 /**
  * Scraper for Tesla Careers ({@code tesla.com/careers/search}).
  *
- * <p>Tesla's career site blocks direct API access (403). This scraper uses Playwright to render
- * the search page and extract job listings from the DOM.
+ * <p>Tesla uses Akamai bot detection that frequently blocks headless browsers. This scraper
+ * attempts to load the page and gracefully returns 0 results when blocked rather than
+ * throwing errors.
  */
 @Slf4j
 @Component
 public class TeslaScraper implements JobScraper {
 
     private static final String SEARCH_URL =
-            "https://www.tesla.com/careers/search/?query=software+engineer&country=US&page=%d";
-    private static final int MAX_PAGES = 10;
+            "https://www.tesla.com/careers/search/?query=software+engineer&country=US";
+    private static final String USER_AGENT =
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    + "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
 
     private final Browser browser;
 
@@ -48,58 +50,73 @@ public class TeslaScraper implements JobScraper {
     public List<JobPosting> scrape(String company) {
         List<JobPosting> allJobs = new ArrayList<>();
 
-        try (BrowserContext context = browser.newContext()) {
+        try (BrowserContext context = browser.newContext(
+                new Browser.NewContextOptions()
+                        .setUserAgent(USER_AGENT)
+                        .setViewportSize(1920, 1080))) {
             Page page = context.newPage();
 
-            for (int pageNum = 1; pageNum <= MAX_PAGES; pageNum++) {
-                String url = String.format(SEARCH_URL, pageNum);
-                page.navigate(url, new Page.NavigateOptions()
-                        .setWaitUntil(WaitUntilState.NETWORKIDLE));
+            page.navigate(SEARCH_URL, new Page.NavigateOptions()
+                    .setWaitUntil(WaitUntilState.NETWORKIDLE)
+                    .setTimeout(30000));
 
-                try {
-                    page.waitForSelector(
-                            "a[href*='/careers/job/'], [class*='job-listing'],"
-                            + " [class*='result']",
-                            new Page.WaitForSelectorOptions().setTimeout(15000));
-                } catch (Exception e) {
-                    log.debug("Tesla page {}: no job cards found, stopping", pageNum);
-                    break;
-                }
+            // Check if blocked by WAF
+            String bodyStart = (String) page.evaluate(
+                    "() => document.body?.innerText?.substring(0, 200) || ''");
+            if (bodyStart.contains("Access Denied")) {
+                log.debug("Tesla: blocked by WAF, skipping");
+                log.info("Tesla: scraped 0 total job(s)");
+                return allJobs;
+            }
 
-                @SuppressWarnings("unchecked")
-                List<Map<String, String>> jobs = (List<Map<String, String>>) page.evaluate(
-                        "() => {\n"
-                        + "  const results = [];\n"
-                        + "  const links = document.querySelectorAll("
-                        + "'a[href*=\"/careers/job/\"]');\n"
-                        + "  const seen = new Set();\n"
-                        + "  links.forEach(link => {\n"
-                        + "    const href = link.getAttribute('href') || '';\n"
-                        + "    const idMatch = href.match(/\\/job\\/(\\d+)/);\n"
-                        + "    if (!idMatch || seen.has(idMatch[1])) return;\n"
-                        + "    seen.add(idMatch[1]);\n"
-                        + "    const card = link.closest('[class*=\"result\"]')"
-                        + " || link.closest('li') || link.closest('div') || link;\n"
-                        + "    const titleEl = card.querySelector('h2, h3, [class*=\"title\"]')"
-                        + " || link;\n"
-                        + "    const locEl = card.querySelector("
-                        + "'[class*=\"location\"], [class*=\"meta\"] span');\n"
-                        + "    results.push({\n"
-                        + "      id: idMatch[1],\n"
-                        + "      title: titleEl.textContent.trim(),\n"
-                        + "      url: href.startsWith('http') ? href"
-                        + " : 'https://www.tesla.com' + href,\n"
-                        + "      location: locEl ? locEl.textContent.trim() : ''\n"
-                        + "    });\n"
-                        + "  });\n"
-                        + "  return results;\n"
-                        + "}");
+            // Wait for job links
+            try {
+                page.waitForSelector("a[href*='/careers/job/']",
+                        new Page.WaitForSelectorOptions().setTimeout(15000));
+            } catch (Exception e) {
+                log.debug("Tesla: no job links found");
+                log.info("Tesla: scraped 0 total job(s)");
+                return allJobs;
+            }
 
-                if (jobs == null || jobs.isEmpty()) {
-                    log.debug("Tesla page {}: no jobs extracted, stopping", pageNum);
-                    break;
-                }
+            @SuppressWarnings("unchecked")
+            List<Map<String, String>> jobs = (List<Map<String, String>>) page.evaluate(
+                    "() => {\n"
+                    + "  const results = [];\n"
+                    + "  const seen = new Set();\n"
+                    + "  const links = document.querySelectorAll("
+                    + "\"a[href*='/careers/job/']\");\n"
+                    + "  links.forEach(link => {\n"
+                    + "    const href = link.getAttribute('href') || '';\n"
+                    + "    const idMatch = href.match(/\\/job\\/(\\d+)/);\n"
+                    + "    if (!idMatch || seen.has(idMatch[1])) return;\n"
+                    + "    seen.add(idMatch[1]);\n"
+                    + "    const card = link.closest('li')"
+                    + " || link.closest('div') || link;\n"
+                    + "    const titleEl = card.querySelector("
+                    + "'h2, h3') || link;\n"
+                    + "    const title = titleEl.textContent.trim();\n"
+                    + "    if (!title || title.length < 3) return;\n"
+                    + "    let location = '';\n"
+                    + "    const spans = card.querySelectorAll('span');\n"
+                    + "    for (const s of spans) {\n"
+                    + "      const text = s.textContent.trim();\n"
+                    + "      if (text && text !== title && text.length < 100) {\n"
+                    + "        location = text; break;\n"
+                    + "      }\n"
+                    + "    }\n"
+                    + "    results.push({\n"
+                    + "      id: idMatch[1],\n"
+                    + "      title: title,\n"
+                    + "      url: href.startsWith('http') ? href"
+                    + " : 'https://www.tesla.com' + href,\n"
+                    + "      location: location\n"
+                    + "    });\n"
+                    + "  });\n"
+                    + "  return results;\n"
+                    + "}");
 
+            if (jobs != null) {
                 for (Map<String, String> job : jobs) {
                     allJobs.add(JobPosting.builder()
                             .company("tesla")
@@ -112,15 +129,12 @@ public class TeslaScraper implements JobScraper {
                             .detectedAt(Instant.now())
                             .build());
                 }
-
-                log.debug("Tesla page {}: extracted {} jobs", pageNum, jobs.size());
             }
-
-            log.info("Tesla: scraped {} total job(s)", allJobs.size());
-            return allJobs;
         } catch (Exception e) {
             log.error("Failed to scrape Tesla careers", e);
-            return allJobs;
         }
+
+        log.info("Tesla: scraped {} total job(s)", allJobs.size());
+        return allJobs;
     }
 }

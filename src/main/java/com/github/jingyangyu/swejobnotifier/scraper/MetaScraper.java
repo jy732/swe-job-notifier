@@ -40,15 +40,7 @@ public class MetaScraper implements JobScraper {
     private final ObjectMapper objectMapper;
 
     public MetaScraper(WebClient.Builder webClientBuilder, ObjectMapper objectMapper) {
-        this.webClient =
-                webClientBuilder
-                        .defaultHeader("User-Agent", USER_AGENT)
-                        .codecs(
-                                configurer ->
-                                        configurer
-                                                .defaultCodecs()
-                                                .maxInMemorySize(16 * 1024 * 1024))
-                        .build();
+        this.webClient = webClientBuilder.defaultHeader("User-Agent", USER_AGENT).build();
         this.objectMapper = objectMapper;
         log.info("Meta scraper initialized (GraphQL API)");
     }

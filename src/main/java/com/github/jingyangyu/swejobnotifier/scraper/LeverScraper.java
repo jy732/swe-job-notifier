@@ -25,14 +25,7 @@ public class LeverScraper implements JobScraper {
     public LeverScraper(
             WebClient.Builder webClientBuilder,
             @Value("${job.companies.lever:}") String companiesCsv) {
-        this.webClient =
-                webClientBuilder
-                        .codecs(
-                                configurer ->
-                                        configurer
-                                                .defaultCodecs()
-                                                .maxInMemorySize(32 * 1024 * 1024))
-                        .build();
+        this.webClient = webClientBuilder.build();
         this.companies = CsvUtil.parse(companiesCsv);
         log.info("Lever scraper initialized with {} company(ies)", companies.size());
     }

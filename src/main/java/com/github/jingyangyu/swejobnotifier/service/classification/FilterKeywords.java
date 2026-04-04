@@ -23,7 +23,8 @@ final class FilterKeywords {
                     "intern", "internship", "new grad",
                     "co-op", "university", "graduate", "college",
                     "frontend", "front-end",
-                    "mobile", "ios", "android");
+                    "mobile", "ios", "android",
+                    "embedded", "security");
 
     // ── Tier 2: Auto-approve obvious mid-level SWE titles ──
     // Matches: "Software Engineer II", "SDE II", "SWE 2", "Backend Developer II", etc.
@@ -55,7 +56,13 @@ final class FilterKeywords {
     // ── Location: Known non-US countries — only these trigger rejection ──
     static final String[] NON_US_COUNTRIES = {
         "uk", "united kingdom", "canada", "germany", "france", "india", "australia",
-        "japan", "singapore", "ireland", "mexico", "brazil", "china", "israel"
+        "japan", "singapore", "ireland", "mexico", "brazil", "china", "israel",
+        "taiwan", "south korea", "korea", "netherlands", "sweden", "switzerland",
+        "poland", "czech", "denmark", "finland", "norway", "new zealand",
+        "philippines", "thailand", "hong kong", "indonesia", "malaysia", "vietnam",
+        "spain", "italy", "portugal", "austria", "belgium", "romania", "hungary",
+        "argentina", "colombia", "chile", "peru", "egypt", "nigeria", "kenya",
+        "south africa", "saudi arabia", "united arab emirates", "uae", "qatar"
     };
 
     // ISO 2-letter country codes that DON'T collide with US state abbreviations.

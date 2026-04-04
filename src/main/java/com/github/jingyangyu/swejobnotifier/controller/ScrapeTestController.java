@@ -86,6 +86,17 @@ public class ScrapeTestController {
                                 + "Chrome/136.0.0.0 Safari/537.36")
                         .setViewportSize(1920, 1080))) {
             Page page = context.newPage();
+
+            // Capture API/XHR requests during page load
+            List<String> apiRequests = new java.util.concurrent.CopyOnWriteArrayList<>();
+            page.onRequest(request -> {
+                String reqUrl = request.url();
+                if (reqUrl.contains("api") || reqUrl.contains("graphql")
+                        || reqUrl.contains("search") || reqUrl.contains("job")) {
+                    apiRequests.add(request.method() + " " + reqUrl);
+                }
+            });
+
             page.navigate(url, new Page.NavigateOptions()
                     .setWaitUntil(WaitUntilState.NETWORKIDLE).setTimeout(30000));
             page.waitForTimeout(3000);
@@ -105,11 +116,13 @@ public class ScrapeTestController {
             String bodyText = (String) page.evaluate(
                     "() => document.body?.innerText?.substring(0, 3000) || 'NO BODY'");
 
-            return Map.of(
-                    "finalUrl", finalUrl,
-                    "title", title,
-                    "jobLinks", links != null ? links : List.of(),
-                    "bodyPreview", bodyText);
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("finalUrl", finalUrl);
+            result.put("title", title);
+            result.put("jobLinks", links != null ? links : List.of());
+            result.put("apiRequests", apiRequests);
+            result.put("bodyPreview", bodyText);
+            return result;
         } catch (Exception e) {
             return Map.of("error", e.getMessage());
         }

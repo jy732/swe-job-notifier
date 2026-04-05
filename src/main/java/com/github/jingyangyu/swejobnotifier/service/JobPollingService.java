@@ -6,10 +6,17 @@ import com.github.jingyangyu.swejobnotifier.scraper.JobScraper;
 import com.github.jingyangyu.swejobnotifier.service.classification.ClassificationResult;
 import com.github.jingyangyu.swejobnotifier.service.classification.JobClassifier;
 import com.github.jingyangyu.swejobnotifier.service.classification.JobTitleFilter;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
@@ -100,12 +107,25 @@ public class JobPollingService {
                     scraper.companies().size());
             for (String company : scraper.companies()) {
                 try {
-                    CompanyProcessingResult result = processCompany(scraper, company);
+                    Future<CompanyProcessingResult> future =
+                            scrapeExecutor.submit(
+                                    (Callable<CompanyProcessingResult>)
+                                            () -> processCompany(scraper, company));
+                    CompanyProcessingResult result =
+                            future.get(COMPANY_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
                     totalScraped += result.getScraped();
                     totalUnseen += result.getUnseen();
                     totalAutoApproved += result.getAutoApproved();
                     totalSentToGemini += result.getSentToGemini();
                     allNewJobs.addAll(result.getApproved());
+                    companiesProcessed++;
+                } catch (TimeoutException e) {
+                    metrics.recordScrapeFail();
+                    log.warn(
+                            "Timeout after {}s polling [{}] {} — skipping",
+                            COMPANY_TIMEOUT.toSeconds(),
+                            scraper.platform(),
+                            company);
                     companiesProcessed++;
                 } catch (Exception e) {
                     metrics.recordScrapeFail();
@@ -192,6 +212,8 @@ public class JobPollingService {
     }
 
     static final int MAX_CLASSIFICATION_FAILURES = 3;
+    private static final Duration COMPANY_TIMEOUT = Duration.ofMinutes(3);
+    private final ExecutorService scrapeExecutor = Executors.newSingleThreadExecutor();
 
     /**
      * Processes jobs for a single company through the full pipeline.

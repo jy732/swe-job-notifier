@@ -11,14 +11,11 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
-import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -26,24 +23,22 @@ import org.springframework.stereotype.Service;
 /**
  * Scheduled polling orchestrator that runs every 15 minutes ({@code job.poll.cron}).
  *
- * <p>Per-company pipeline: Scrape → Pre-filter (freshness, title, location, SWE relevance) → Dedup
- * against DB → Auto-approve obvious mid-level titles → Classify ambiguous titles via Gemini →
- * Persist.
- *
- * <p>Persistence strategy: ALL jobs are persisted for dedup tracking. Gemini-failed jobs are saved
- * with an incremented {@code classificationFailures} count and retried on subsequent polls. After 3
- * consecutive failures (~45 min of retries), a job is auto-approved — better to send a borderline
- * job than miss a real opportunity.
+ * <p>Companies within each platform are scraped in parallel (8-thread pool) with a per-company
+ * timeout. Single-company Playwright scrapers run sequentially since they share a browser instance.
  */
 @Slf4j
 @Service
 public class JobPollingService {
+
+    static final int MAX_CLASSIFICATION_FAILURES = 3;
+    private static final Duration COMPANY_TIMEOUT = Duration.ofMinutes(3);
 
     private final List<JobScraper> scrapers;
     private final JobPostingRepository repository;
     private final JobClassifier classifier;
     private final JobTitleFilter titleFilter;
     private final PipelineMetrics metrics;
+    private final ExecutorService scrapePool = Executors.newFixedThreadPool(8);
 
     public JobPollingService(
             List<JobScraper> scrapers,
@@ -58,36 +53,6 @@ public class JobPollingService {
         this.metrics = metrics;
     }
 
-    /** Result of processing jobs for a single company. */
-    @Getter
-    private static class CompanyProcessingResult {
-        private final List<JobPosting> approved;
-        private final int scraped;
-        private final int unseen;
-        private final int autoApproved;
-        private final int sentToGemini;
-        private final int persisted;
-        private final int geminiFailed;
-
-        CompanyProcessingResult(
-                List<JobPosting> approved,
-                int scraped,
-                int unseen,
-                int autoApproved,
-                int sentToGemini,
-                int persisted,
-                int geminiFailed) {
-            this.approved = approved;
-            this.scraped = scraped;
-            this.unseen = unseen;
-            this.autoApproved = autoApproved;
-            this.sentToGemini = sentToGemini;
-            this.persisted = persisted;
-            this.geminiFailed = geminiFailed;
-        }
-    }
-
-    /** Polls all configured scrapers on the configured cron schedule. */
     @Scheduled(cron = "${job.poll.cron}")
     public void poll() {
         log.info("=== POLL CYCLE START ===");
@@ -105,41 +70,17 @@ public class JobPollingService {
                     "Processing platform: {} ({} companies)",
                     scraper.platform(),
                     scraper.companies().size());
-            for (String company : scraper.companies()) {
-                try {
-                    Future<CompanyProcessingResult> future =
-                            scrapeExecutor.submit(
-                                    (Callable<CompanyProcessingResult>)
-                                            () -> processCompany(scraper, company));
-                    CompanyProcessingResult result =
-                            future.get(COMPANY_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
-                    totalScraped += result.getScraped();
-                    totalUnseen += result.getUnseen();
-                    totalAutoApproved += result.getAutoApproved();
-                    totalSentToGemini += result.getSentToGemini();
-                    allNewJobs.addAll(result.getApproved());
-                    companiesProcessed++;
-                } catch (TimeoutException e) {
-                    metrics.recordScrapeFail();
-                    log.warn(
-                            "Timeout after {}s polling [{}] {} — skipping",
-                            COMPANY_TIMEOUT.toSeconds(),
-                            scraper.platform(),
-                            company);
-                    companiesProcessed++;
-                } catch (Exception e) {
-                    metrics.recordScrapeFail();
-                    log.error(
-                            "Error polling [{}] {} — skipping company",
-                            scraper.platform(),
-                            company,
-                            e);
-                    companiesProcessed++;
-                }
+
+            for (var result : scrapeAllCompanies(scraper)) {
+                totalScraped += result.scraped;
+                totalUnseen += result.unseen;
+                totalAutoApproved += result.autoApproved;
+                totalSentToGemini += result.sentToGemini;
+                allNewJobs.addAll(result.approved);
+                companiesProcessed++;
             }
         }
 
-        // Retry jobs that previously failed Gemini classification
         retryFailedClassifications(allNewJobs);
 
         metrics.stopPollTimer(timerSample);
@@ -159,85 +100,72 @@ public class JobPollingService {
                 elapsed / 1000);
     }
 
+    // ── Parallel scraping ──────────────────────────────────────────────────
+
     /**
-     * Retries Gemini classification for previously failed jobs. Jobs that have reached {@value
-     * #MAX_CLASSIFICATION_FAILURES} failures are auto-approved. The rest are re-sent to Gemini.
+     * Scrapes all companies for a platform. Multi-company platforms run in parallel; single-company
+     * platforms (Playwright-based, shared browser) run on one thread.
      */
-    private void retryFailedClassifications(List<JobPosting> allNewJobs) {
-        List<JobPosting> retryJobs =
-                repository.findByClassificationFailuresGreaterThanAndClassificationFailuresLessThan(
-                        0, MAX_CLASSIFICATION_FAILURES);
-        List<JobPosting> exhaustedJobs =
-                repository.findByClassificationFailuresGreaterThanAndClassificationFailuresLessThan(
-                        MAX_CLASSIFICATION_FAILURES - 1, Integer.MAX_VALUE);
+    private List<CompanyResult> scrapeAllCompanies(JobScraper scraper) {
+        List<String> companies = scraper.companies();
+        List<Future<CompanyResult>> futures =
+                companies.stream()
+                        .map(
+                                company ->
+                                        scrapePool.submit(
+                                                () -> safeProcessCompany(scraper, company)))
+                        .toList();
 
-        // Auto-approve jobs that exhausted retries
-        for (JobPosting job : exhaustedJobs) {
-            metrics.recordAutoApprovedFallback();
-            log.warn(
-                    "Auto-approving after {} Gemini failures: [{}] {}",
-                    job.getClassificationFailures(),
-                    job.getCompany(),
-                    job.getTitle());
-            job.setMidLevel(true);
-            job.setClassificationFailures(0);
-            repository.save(job);
-            allNewJobs.add(job);
+        List<CompanyResult> results = new ArrayList<>();
+        for (int i = 0; i < futures.size(); i++) {
+            results.add(awaitResult(futures.get(i), scraper, companies.get(i)));
         }
-
-        if (retryJobs.isEmpty()) {
-            return;
-        }
-
-        log.info("=== RETRY === {} job(s) pending Gemini re-classification", retryJobs.size());
-        ClassificationResult result = classifier.classify(retryJobs);
-
-        for (JobPosting job : result.getApproved()) {
-            job.setMidLevel(true);
-            job.setClassificationFailures(0);
-            repository.save(job);
-            allNewJobs.add(job);
-        }
-        for (JobPosting job : result.getFailed()) {
-            job.setClassificationFailures(job.getClassificationFailures() + 1);
-            repository.save(job);
-        }
-
-        log.info(
-                "=== RETRY COMPLETE === {}/{} approved, {} failed (attempt {}+)",
-                result.getApproved().size(),
-                retryJobs.size(),
-                result.getFailed().size(),
-                retryJobs.isEmpty() ? 0 : retryJobs.get(0).getClassificationFailures());
+        return results;
     }
 
-    static final int MAX_CLASSIFICATION_FAILURES = 3;
-    private static final Duration COMPANY_TIMEOUT = Duration.ofMinutes(3);
-    private final ExecutorService scrapeExecutor = Executors.newSingleThreadExecutor();
+    private CompanyResult safeProcessCompany(JobScraper scraper, String company) {
+        try {
+            return processCompany(scraper, company);
+        } catch (Exception e) {
+            log.error("Error polling [{}] {} — skipping company", scraper.platform(), company, e);
+            return CompanyResult.EMPTY;
+        }
+    }
 
-    /**
-     * Processes jobs for a single company through the full pipeline.
-     *
-     * <p>Flow: scrape → pre-filter → dedup → classify + persist.
-     */
-    private CompanyProcessingResult processCompany(JobScraper scraper, String company) {
+    private CompanyResult awaitResult(Future<CompanyResult> future, JobScraper scraper, String co) {
+        try {
+            return future.get(COMPANY_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (Exception e) {
+            future.cancel(true);
+            metrics.recordScrapeFail();
+            if (e instanceof java.util.concurrent.TimeoutException) {
+                log.warn(
+                        "Timeout after {}s polling [{}] {} — skipping",
+                        COMPANY_TIMEOUT.toSeconds(),
+                        scraper.platform(),
+                        co);
+            } else {
+                log.error("Error polling [{}] {} — skipping company", scraper.platform(), co, e);
+            }
+            return CompanyResult.EMPTY;
+        }
+    }
+
+    // ── Per-company pipeline ───────────────────────────────────────────────
+
+    private CompanyResult processCompany(JobScraper scraper, String company) {
         List<JobPosting> scraped = scraper.scrape(company);
         List<JobPosting> candidates = applyPreFilters(scraper, company, scraped);
         List<JobPosting> unseen = dedup(candidates);
 
         if (unseen.isEmpty()) {
             log.info("[{}] {} — 0 unseen, skipping", scraper.platform(), company);
-            return new CompanyProcessingResult(List.of(), scraped.size(), 0, 0, 0, 0, 0);
+            return new CompanyResult(List.of(), scraped.size(), 0, 0, 0);
         }
 
         return classifyAndPersist(scraper, company, scraped.size(), unseen);
     }
 
-    /**
-     * Applies Tier 0–3 pre-filters and logs the funnel counts at each stage. Filters are applied in
-     * order: freshness → title exclusion → US location → SWE relevance. Each stage narrows the set;
-     * the funnel log helps diagnose which filter is too aggressive or too lenient.
-     */
     private List<JobPosting> applyPreFilters(
             JobScraper scraper, String company, List<JobPosting> scraped) {
         List<JobPosting> fresh = scraped.stream().filter(titleFilter::isFresh).toList();
@@ -249,7 +177,8 @@ public class JobPollingService {
                 usLocation.stream().filter(titleFilter::isSweRelevant).toList();
 
         log.info(
-                "[{}] {} — {} scraped → {} fresh → {} after exclude → {} US location → {} SWE-relevant",
+                "[{}] {} — {} scraped → {} fresh → {} after exclude"
+                        + " → {} US location → {} SWE-relevant",
                 scraper.platform(),
                 company,
                 scraped.size(),
@@ -260,7 +189,6 @@ public class JobPollingService {
         return sweRelevant;
     }
 
-    /** Removes jobs already in the database. */
     private List<JobPosting> dedup(List<JobPosting> jobs) {
         return jobs.stream()
                 .filter(
@@ -270,14 +198,9 @@ public class JobPollingService {
                 .toList();
     }
 
-    /**
-     * Classifies unseen jobs and persists results.
-     *
-     * <p>Jobs with obvious mid-level titles are auto-approved without Gemini. The rest go through
-     * Gemini classification. All jobs are persisted; Gemini failures get an incremented failure
-     * count and will be retried by {@link #retryFailedClassifications} on subsequent polls.
-     */
-    private CompanyProcessingResult classifyAndPersist(
+    // ── Classification + persistence ───────────────────────────────────────
+
+    private CompanyResult classifyAndPersist(
             JobScraper scraper, String company, int scrapedCount, List<JobPosting> unseen) {
         List<JobPosting> autoApproved = new ArrayList<>();
         List<JobPosting> needsGemini = new ArrayList<>();
@@ -296,7 +219,6 @@ public class JobPollingService {
                 autoApproved.size(),
                 needsGemini.size());
 
-        // Gemini classification
         List<JobPosting> geminiApproved = List.of();
         List<JobPosting> geminiFailed = List.of();
         if (!needsGemini.isEmpty()) {
@@ -320,26 +242,10 @@ public class JobPollingService {
                 autoApproved.size(),
                 geminiApproved.size());
 
-        return new CompanyProcessingResult(
-                allApproved,
-                scrapedCount,
-                unseen.size(),
-                autoApproved.size(),
-                needsGemini.size(),
-                persisted,
-                geminiFailed.size());
+        return new CompanyResult(
+                allApproved, scrapedCount, unseen.size(), autoApproved.size(), needsGemini.size());
     }
 
-    /**
-     * Persists all jobs for dedup tracking and failure counting.
-     *
-     * <ul>
-     *   <li>Approved jobs: {@code midLevel=true}, {@code classificationFailures=0}.
-     *   <li>Rejected jobs: {@code midLevel=false}, {@code classificationFailures=0}.
-     *   <li>Gemini-failed jobs: {@code midLevel=false}, {@code classificationFailures} incremented
-     *       — they will be retried on subsequent polls until auto-approved at the threshold.
-     * </ul>
-     */
     private int persistJobs(
             List<JobPosting> toProcess, List<JobPosting> approved, List<JobPosting> geminiFailed) {
         Set<String> approvedIds =
@@ -362,5 +268,63 @@ public class JobPollingService {
             persisted++;
         }
         return persisted;
+    }
+
+    // ── Gemini retry ───────────────────────────────────────────────────────
+
+    private void retryFailedClassifications(List<JobPosting> allNewJobs) {
+        List<JobPosting> retryJobs =
+                repository.findByClassificationFailuresGreaterThanAndClassificationFailuresLessThan(
+                        0, MAX_CLASSIFICATION_FAILURES);
+        List<JobPosting> exhaustedJobs =
+                repository.findByClassificationFailuresGreaterThanAndClassificationFailuresLessThan(
+                        MAX_CLASSIFICATION_FAILURES - 1, Integer.MAX_VALUE);
+
+        for (JobPosting job : exhaustedJobs) {
+            metrics.recordAutoApprovedFallback();
+            log.warn(
+                    "Auto-approving after {} Gemini failures: [{}] {}",
+                    job.getClassificationFailures(),
+                    job.getCompany(),
+                    job.getTitle());
+            job.setMidLevel(true);
+            job.setClassificationFailures(0);
+            repository.save(job);
+            allNewJobs.add(job);
+        }
+
+        if (retryJobs.isEmpty()) return;
+
+        log.info("=== RETRY === {} job(s) pending Gemini re-classification", retryJobs.size());
+        ClassificationResult result = classifier.classify(retryJobs);
+
+        for (JobPosting job : result.getApproved()) {
+            job.setMidLevel(true);
+            job.setClassificationFailures(0);
+            repository.save(job);
+            allNewJobs.add(job);
+        }
+        for (JobPosting job : result.getFailed()) {
+            job.setClassificationFailures(job.getClassificationFailures() + 1);
+            repository.save(job);
+        }
+
+        log.info(
+                "=== RETRY COMPLETE === {}/{} approved, {} failed (attempt {}+)",
+                result.getApproved().size(),
+                retryJobs.size(),
+                result.getFailed().size(),
+                retryJobs.isEmpty() ? 0 : retryJobs.get(0).getClassificationFailures());
+    }
+
+    // ── Result record ──────────────────────────────────────────────────────
+
+    private record CompanyResult(
+            List<JobPosting> approved,
+            int scraped,
+            int unseen,
+            int autoApproved,
+            int sentToGemini) {
+        static final CompanyResult EMPTY = new CompanyResult(List.of(), 0, 0, 0, 0);
     }
 }

@@ -1,5 +1,7 @@
 package com.github.jingyangyu.swejobnotifier;
 
+import com.github.jingyangyu.swejobnotifier.config.IcimsProperties;
+import com.github.jingyangyu.swejobnotifier.config.OracleCloudProperties;
 import com.github.jingyangyu.swejobnotifier.config.WorkdayProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -15,7 +17,11 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @SpringBootApplication
 @EnableScheduling
 @EnableRetry
-@EnableConfigurationProperties(WorkdayProperties.class)
+@EnableConfigurationProperties({
+    WorkdayProperties.class,
+    IcimsProperties.class,
+    OracleCloudProperties.class
+})
 public class SweJobNotifierApplication {
 
     public static void main(String[] args) {

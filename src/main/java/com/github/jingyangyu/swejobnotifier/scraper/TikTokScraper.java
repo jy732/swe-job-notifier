@@ -1,7 +1,5 @@
 package com.github.jingyangyu.swejobnotifier.scraper;
 
-import com.github.jingyangyu.swejobnotifier.config.IcimsProperties;
-import com.github.jingyangyu.swejobnotifier.config.IcimsProperties.IcimsCompany;
 import com.github.jingyangyu.swejobnotifier.model.JobPosting;
 import com.microsoft.playwright.Browser;
 import com.microsoft.playwright.BrowserContext;
@@ -9,54 +7,45 @@ import com.microsoft.playwright.Page;
 import com.microsoft.playwright.options.WaitUntilState;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 /**
- * Scraper for companies using iCIMS career portals. Modern iCIMS portals are React SPAs that
- * require a headless browser to render job listings.
+ * Scraper for TikTok Careers ({@code lifeattiktok.com/search}). TikTok uses a Next.js SPA backed by
+ * an API that requires browser-level request headers, so we use Playwright to render the page and
+ * extract job data from the DOM.
  */
 @Slf4j
 @Component
-public class IcimsScraper implements JobScraper {
+public class TikTokScraper implements JobScraper {
 
+    private static final String SEARCH_URL =
+            "https://lifeattiktok.com/search?keyword=software+engineer";
     private static final String USER_AGENT =
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                     + "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
 
     private final Browser browser;
-    private final IcimsProperties properties;
 
-    public IcimsScraper(Browser browser, IcimsProperties properties) {
+    public TikTokScraper(Browser browser) {
         this.browser = browser;
-        this.properties = properties;
-        log.info(
-                "iCIMS scraper initialized with {} company(ies)", properties.getCompanies().size());
+        log.info("TikTok scraper initialized (Playwright)");
     }
 
     @Override
     public String platform() {
-        return "icims";
+        return "tiktok";
     }
 
     @Override
     public List<String> companies() {
-        return properties.getCompanies().stream().map(IcimsCompany::getName).toList();
+        return List.of("tiktok");
     }
 
     @Override
     public List<JobPosting> scrape(String company) {
-        Optional<IcimsCompany> configOpt = properties.findByName(company);
-        if (configOpt.isEmpty()) {
-            log.warn("No iCIMS config found for company: {}", company);
-            return Collections.emptyList();
-        }
-
-        IcimsCompany config = configOpt.get();
         List<JobPosting> allJobs = new ArrayList<>();
 
         try (BrowserContext context =
@@ -66,21 +55,26 @@ public class IcimsScraper implements JobScraper {
                                 .setViewportSize(1920, 1080))) {
             Page page = context.newPage();
 
-            String searchUrl = config.baseUrl() + "/jobs/search?ss=1&searchRelation=keyword_all";
             page.navigate(
-                    searchUrl,
+                    SEARCH_URL,
                     new Page.NavigateOptions()
                             .setWaitUntil(WaitUntilState.NETWORKIDLE)
                             .setTimeout(30000));
 
-            // Wait for job cards to render
+            // Wait for job card links to render
             try {
                 page.waitForSelector(
-                        "a[href*='/jobs/']", new Page.WaitForSelectorOptions().setTimeout(15000));
+                        "a[href*='/search/']", new Page.WaitForSelectorOptions().setTimeout(15000));
             } catch (Exception e) {
-                log.debug("iCIMS [{}]: no job links found after waiting", company);
-                log.info("iCIMS [{}]: scraped 0 total job(s)", company);
+                log.debug("TikTok: no job links found after waiting");
+                log.info("TikTok: scraped 0 total job(s)");
                 return allJobs;
+            }
+
+            // Scroll down to load more results
+            for (int i = 0; i < 5; i++) {
+                page.evaluate("window.scrollTo(0, document.body.scrollHeight)");
+                page.waitForTimeout(1500);
             }
 
             @SuppressWarnings("unchecked")
@@ -91,33 +85,24 @@ public class IcimsScraper implements JobScraper {
                                             + "  const results = [];\n"
                                             + "  const seen = new Set();\n"
                                             + "  const links = document.querySelectorAll("
-                                            + "\"a[href*='/jobs/']\");\n"
+                                            + "\"a[href*='/search/']\");\n"
                                             + "  links.forEach(link => {\n"
                                             + "    const href = link.getAttribute('href') || '';\n"
                                             + "    const idMatch = href.match("
-                                            + "/\\/jobs\\/(\\d+)/);\n"
+                                            + "/\\/search\\/(\\d+)/);\n"
                                             + "    if (!idMatch || seen.has(idMatch[1])) return;\n"
                                             + "    seen.add(idMatch[1]);\n"
-                                            + "    const title = link.textContent.trim();\n"
-                                            + "    if (!title || title.length < 3) return;\n"
-                                            + "    const card = link.closest('li')"
-                                            + " || link.closest('div') || link;\n"
-                                            + "    let location = '';\n"
-                                            + "    const spans = card.querySelectorAll('span');\n"
-                                            + "    for (const s of spans) {\n"
-                                            + "      const text = s.textContent.trim();\n"
-                                            + "      if (text && text !== title"
-                                            + " && text.length < 100"
-                                            + " && text.length > 2) {\n"
-                                            + "        location = text; break;\n"
-                                            + "      }\n"
-                                            + "    }\n"
-                                            + "    const fullUrl = href.startsWith('http')"
-                                            + " ? href : window.location.origin + href;\n"
+                                            + "    const text = link.textContent.trim();\n"
+                                            + "    if (!text || text.length < 5) return;\n"
+                                            + "    const parts = text.split('\\n')"
+                                            + ".map(s => s.trim()).filter(Boolean);\n"
+                                            + "    const title = parts[0] || text;\n"
+                                            + "    const location = parts[1] || '';\n"
                                             + "    results.push({\n"
                                             + "      id: idMatch[1],\n"
                                             + "      title: title,\n"
-                                            + "      url: fullUrl,\n"
+                                            + "      url: 'https://lifeattiktok.com/search/'"
+                                            + " + idMatch[1],\n"
                                             + "      location: location\n"
                                             + "    });\n"
                                             + "  });\n"
@@ -128,7 +113,7 @@ public class IcimsScraper implements JobScraper {
                 for (Map<String, String> job : jobs) {
                     allJobs.add(
                             JobPosting.builder()
-                                    .company(company)
+                                    .company("tiktok")
                                     .externalId(job.getOrDefault("id", ""))
                                     .title(job.getOrDefault("title", ""))
                                     .url(job.getOrDefault("url", ""))
@@ -140,10 +125,10 @@ public class IcimsScraper implements JobScraper {
                 }
             }
         } catch (Exception e) {
-            log.error("Failed to scrape iCIMS for company: {}", company, e);
+            log.error("Failed to scrape TikTok careers", e);
         }
 
-        log.info("iCIMS [{}]: scraped {} total job(s)", company, allJobs.size());
+        log.info("TikTok: scraped {} total job(s)", allJobs.size());
         return allJobs;
     }
 }

@@ -90,7 +90,7 @@ cp .env.example .env  # or create manually
 GEMINI_API_KEY=your-gemini-api-key
 EMAIL_USERNAME=you@gmail.com
 EMAIL_APP_PASSWORD=your-gmail-app-password
-NOTIFICATION_EMAIL=recipient@example.com
+NOTIFICATION_EMAIL=recipient@example.com,another@example.com
 ```
 
 3. Start the application:

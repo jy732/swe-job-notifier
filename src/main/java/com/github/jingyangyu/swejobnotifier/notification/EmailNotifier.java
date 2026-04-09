@@ -5,6 +5,7 @@ import jakarta.mail.MessagingException;
 import jakarta.mail.internet.MimeMessage;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -30,7 +31,7 @@ import org.springframework.stereotype.Component;
 public class EmailNotifier {
 
     private final JavaMailSender mailSender;
-    private final String toAddress;
+    private final String[] toAddresses;
     private final String fromAddress;
     private final RetryTemplate retryTemplate;
 
@@ -42,7 +43,11 @@ public class EmailNotifier {
             @Value("${job.notification.to}") String toAddress,
             @Value("${spring.mail.username}") String fromAddress) {
         this.mailSender = mailSender;
-        this.toAddress = toAddress;
+        this.toAddresses =
+                Arrays.stream(toAddress.split(","))
+                        .map(String::trim)
+                        .filter(s -> !s.isBlank())
+                        .toArray(String[]::new);
         this.fromAddress = fromAddress;
         this.retryTemplate =
                 RetryTemplate.builder()
@@ -52,14 +57,14 @@ public class EmailNotifier {
                         .retryOn(MailException.class)
                         .build();
 
-        if (toAddress.isBlank() || fromAddress.isBlank()) {
+        if (toAddresses.length == 0 || fromAddress.isBlank()) {
             log.error(
                     "██ EMAIL NOT CONFIGURED ██ "
                             + "toAddress={}, fromAddress={} — alerts will NOT be sent until fixed",
-                    toAddress.isBlank() ? "<MISSING>" : toAddress,
+                    toAddresses.length == 0 ? "<MISSING>" : toAddress,
                     fromAddress.isBlank() ? "<MISSING>" : fromAddress);
         } else {
-            log.info("Email configured: from={}, to={}", fromAddress, toAddress);
+            log.info("Email configured: from={}, to={}", fromAddress, Arrays.toString(toAddresses));
         }
     }
 
@@ -69,7 +74,7 @@ public class EmailNotifier {
      * @return true if email was sent successfully, false otherwise
      */
     public boolean sendNewJobAlert(List<JobPosting> newJobs) {
-        if (toAddress.isBlank()) {
+        if (toAddresses.length == 0) {
             log.error("EMAIL NOT CONFIGURED — {} job(s) will NOT be sent", newJobs.size());
             return false;
         }
@@ -79,16 +84,19 @@ public class EmailNotifier {
 
         String subject =
                 String.format("[Job Alert] %d new SWE II posting(s) detected", newJobs.size());
-        log.info("Preparing job alert email: to={}, subject={}", toAddress, subject);
+        log.info(
+                "Preparing job alert email: to={}, subject={}",
+                Arrays.toString(toAddresses),
+                subject);
         String body = buildAlertHtml(newJobs);
         try {
             sendHtmlEmail(subject, body);
-            log.info("Job alert email sent successfully to {}", toAddress);
+            log.info("Job alert email sent successfully to {}", Arrays.toString(toAddresses));
             return true;
         } catch (Exception e) {
             log.error(
                     "Failed to send job alert email to {} after retries: {}",
-                    toAddress,
+                    Arrays.toString(toAddresses),
                     e.getMessage(),
                     e);
             return false;
@@ -101,12 +109,15 @@ public class EmailNotifier {
      * @return true if email was sent successfully, false otherwise
      */
     public boolean sendDailySummary(List<JobPosting> recentJobs) {
-        if (toAddress.isBlank()) {
+        if (toAddresses.length == 0) {
             log.error(
                     "Notification email not configured (toAddress blank) — skipping daily summary");
             return false;
         }
-        log.info("Preparing daily summary email: to={}, jobs={}", toAddress, recentJobs.size());
+        log.info(
+                "Preparing daily summary email: to={}, jobs={}",
+                Arrays.toString(toAddresses),
+                recentJobs.size());
 
         String subject;
         String body;
@@ -208,7 +219,7 @@ public class EmailNotifier {
                     MimeMessage message = mailSender.createMimeMessage();
                     MimeMessageHelper helper = new MimeMessageHelper(message, true);
                     helper.setFrom(fromAddress);
-                    helper.setTo(toAddress);
+                    helper.setTo(toAddresses);
                     helper.setSubject(subject);
                     helper.setText(htmlBody, true);
                     mailSender.send(message);

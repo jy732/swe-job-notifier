@@ -8,10 +8,10 @@ Automated job posting monitor that scrapes career pages, filters for mid-level s
 
 1. **Scrape** — Polls 120+ company career pages every 15 minutes using an 8-thread pool
 2. **Pre-filter** — Removes stale postings, non-US locations, excluded titles (management, intern, staff+), and non-SWE roles
-3. **Dedup** — Skips jobs already in the database
+3. **Dedup** — Loads all known job keys into an in-memory set once per poll cycle for O(1) lookups (no per-job DB queries)
 4. **Auto-approve** — Titles containing "Software Engineer" (without senior/staff/principal qualifiers) are approved without AI
 5. **Gemini classify** — Ambiguous titles are sent to Gemini 2.5 Flash in batches of 50 for mid-level classification
-6. **Persist** — All jobs saved to H2 for dedup tracking; Gemini failures are retried on subsequent polls (auto-approved after 3 failures)
+6. **Persist** — All jobs batch-saved to H2 via `saveAll()`; Gemini failures are retried on subsequent polls (auto-approved after 3 failures)
 7. **Email alert** — Independent 5-minute scan sends alerts for any unnotified mid-level jobs
 
 ### End-to-End Workflow

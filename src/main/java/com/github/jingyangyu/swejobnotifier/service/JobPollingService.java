@@ -9,6 +9,7 @@ import com.github.jingyangyu.swejobnotifier.service.classification.JobTitleFilte
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
@@ -65,13 +66,17 @@ public class JobPollingService {
         int totalSentToGemini = 0;
         int companiesProcessed = 0;
 
+        // Load all known job keys once for O(1) in-memory dedup (replaces N per-job DB queries)
+        Set<String> knownKeys = new HashSet<>(repository.findAllCompanyExternalIdKeys());
+        log.info("Loaded {} known job keys for dedup", knownKeys.size());
+
         for (JobScraper scraper : scrapers) {
             log.info(
                     "Processing platform: {} ({} companies)",
                     scraper.platform(),
                     scraper.companies().size());
 
-            for (var result : scrapeAllCompanies(scraper)) {
+            for (var result : scrapeAllCompanies(scraper, knownKeys)) {
                 totalScraped += result.scraped;
                 totalUnseen += result.unseen;
                 totalAutoApproved += result.autoApproved;
@@ -106,14 +111,16 @@ public class JobPollingService {
      * Scrapes all companies for a platform. Multi-company platforms run in parallel; single-company
      * platforms (Playwright-based, shared browser) run on one thread.
      */
-    private List<CompanyResult> scrapeAllCompanies(JobScraper scraper) {
+    private List<CompanyResult> scrapeAllCompanies(JobScraper scraper, Set<String> knownKeys) {
         List<String> companies = scraper.companies();
         List<Future<CompanyResult>> futures =
                 companies.stream()
                         .map(
                                 company ->
                                         scrapePool.submit(
-                                                () -> safeProcessCompany(scraper, company)))
+                                                () ->
+                                                        safeProcessCompany(
+                                                                scraper, company, knownKeys)))
                         .toList();
 
         List<CompanyResult> results = new ArrayList<>();
@@ -123,9 +130,10 @@ public class JobPollingService {
         return results;
     }
 
-    private CompanyResult safeProcessCompany(JobScraper scraper, String company) {
+    private CompanyResult safeProcessCompany(
+            JobScraper scraper, String company, Set<String> knownKeys) {
         try {
-            return processCompany(scraper, company);
+            return processCompany(scraper, company, knownKeys);
         } catch (Exception e) {
             log.error("Error polling [{}] {} — skipping company", scraper.platform(), company, e);
             return CompanyResult.EMPTY;
@@ -153,10 +161,11 @@ public class JobPollingService {
 
     // ── Per-company pipeline ───────────────────────────────────────────────
 
-    private CompanyResult processCompany(JobScraper scraper, String company) {
+    private CompanyResult processCompany(
+            JobScraper scraper, String company, Set<String> knownKeys) {
         List<JobPosting> scraped = scraper.scrape(company);
         List<JobPosting> candidates = applyPreFilters(scraper, company, scraped);
-        List<JobPosting> unseen = dedup(candidates);
+        List<JobPosting> unseen = dedup(candidates, knownKeys);
 
         if (unseen.isEmpty()) {
             log.info("[{}] {} — 0 unseen, skipping", scraper.platform(), company);
@@ -189,12 +198,9 @@ public class JobPollingService {
         return sweRelevant;
     }
 
-    private List<JobPosting> dedup(List<JobPosting> jobs) {
+    private List<JobPosting> dedup(List<JobPosting> jobs, Set<String> knownKeys) {
         return jobs.stream()
-                .filter(
-                        job ->
-                                !repository.existsByCompanyAndExternalId(
-                                        job.getCompany(), job.getExternalId()))
+                .filter(job -> !knownKeys.contains(job.getCompany() + ":" + job.getExternalId()))
                 .toList();
     }
 
@@ -252,10 +258,10 @@ public class JobPollingService {
                 approved.stream().map(JobPosting::getExternalId).collect(Collectors.toSet());
         Set<String> failedIds =
                 geminiFailed.stream().map(JobPosting::getExternalId).collect(Collectors.toSet());
-        int persisted = 0;
+        Instant now = Instant.now();
         for (JobPosting job : toProcess) {
             if (job.getDetectedAt() == null) {
-                job.setDetectedAt(Instant.now());
+                job.setDetectedAt(now);
             }
             if (failedIds.contains(job.getExternalId())) {
                 job.setClassificationFailures(job.getClassificationFailures() + 1);
@@ -264,10 +270,9 @@ public class JobPollingService {
                 job.setMidLevel(approvedIds.contains(job.getExternalId()));
                 job.setClassificationFailures(0);
             }
-            repository.save(job);
-            persisted++;
         }
-        return persisted;
+        repository.saveAll(toProcess);
+        return toProcess.size();
     }
 
     // ── Gemini retry ───────────────────────────────────────────────────────

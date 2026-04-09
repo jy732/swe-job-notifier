@@ -259,20 +259,28 @@ public class JobPollingService {
         Set<String> failedIds =
                 geminiFailed.stream().map(JobPosting::getExternalId).collect(Collectors.toSet());
         Instant now = Instant.now();
+        List<JobPosting> toPersist = new ArrayList<>();
         for (JobPosting job : toProcess) {
-            if (job.getDetectedAt() == null) {
-                job.setDetectedAt(now);
+            // Merge with any existing row to avoid unique-constraint violations
+            // (the in-memory dedup set is a snapshot — duplicates can slip through)
+            JobPosting target =
+                    repository
+                            .findByCompanyAndExternalId(job.getCompany(), job.getExternalId())
+                            .orElse(job);
+            if (target.getDetectedAt() == null) {
+                target.setDetectedAt(now);
             }
             if (failedIds.contains(job.getExternalId())) {
-                job.setClassificationFailures(job.getClassificationFailures() + 1);
-                job.setMidLevel(false);
+                target.setClassificationFailures(target.getClassificationFailures() + 1);
+                target.setMidLevel(false);
             } else {
-                job.setMidLevel(approvedIds.contains(job.getExternalId()));
-                job.setClassificationFailures(0);
+                target.setMidLevel(approvedIds.contains(job.getExternalId()));
+                target.setClassificationFailures(0);
             }
+            toPersist.add(target);
         }
-        repository.saveAll(toProcess);
-        return toProcess.size();
+        repository.saveAll(toPersist);
+        return toPersist.size();
     }
 
     // ── Gemini retry ───────────────────────────────────────────────────────

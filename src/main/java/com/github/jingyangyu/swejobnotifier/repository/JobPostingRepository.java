@@ -3,6 +3,7 @@ package com.github.jingyangyu.swejobnotifier.repository;
 import com.github.jingyangyu.swejobnotifier.model.JobPosting;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -16,6 +17,9 @@ public interface JobPostingRepository extends JpaRepository<JobPosting, Long> {
     /** Returns all compound keys (company + ':' + externalId) for bulk in-memory dedup. */
     @Query("SELECT jp.company || ':' || jp.externalId FROM JobPosting jp")
     Set<String> findAllCompanyExternalIdKeys();
+
+    /** Finds an existing job by its natural key for upsert-safe persistence. */
+    Optional<JobPosting> findByCompanyAndExternalId(String company, String externalId);
 
     List<JobPosting> findByMidLevelTrueAndDetectedAtAfterOrderByDetectedAtDesc(Instant since);
 

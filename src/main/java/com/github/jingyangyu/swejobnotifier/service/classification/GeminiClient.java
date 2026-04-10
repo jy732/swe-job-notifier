@@ -4,9 +4,12 @@ import com.github.jingyangyu.swejobnotifier.model.JobPosting;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
@@ -28,14 +31,29 @@ import org.springframework.web.reactive.function.client.WebClient;
 @Component
 public class GeminiClient {
 
-    private static final int DESC_SNIPPET_LENGTH = 500;
+    private static final int SIGNAL_WINDOW = 200;
+    private static final int MAX_SIGNALS = 3;
+
+    /** Signal keywords to search for in job descriptions. */
+    private static final List<String> SIGNAL_KEYWORDS =
+            List.of(
+                    "years",
+                    "pursuing",
+                    "graduating",
+                    "graduation",
+                    "new grad",
+                    "university",
+                    "college");
+
+    /** Pattern to strip HTML tags from description snippets. */
+    private static final Pattern HTML_TAG_PATTERN = Pattern.compile("<[^>]+>");
 
     private static final String SYSTEM_PROMPT =
-            "Classify each job as Y (mid-level SWE) or N. "
+            "Classify each job as Y (mid-level SWE) or N based on the title and signals "
+                    + "extracted from the job description. "
                     + "Mid-level = 2-5 years experience, equivalent to SWE II / L4 / E4 / IC3. "
                     + "Include: Backend/Frontend/Full Stack/Platform/Infrastructure/Mobile engineer"
-                    + " at mid-level, titles without level qualifier if description suggests 2-5"
-                    + " YOE. "
+                    + " at mid-level, titles without level qualifier if signals suggest 2-5 YOE. "
                     + "Exclude: Senior/Staff/Principal, Junior/Intern/New Grad, 6+ YOE, 0-1 YOE,"
                     + " managers, non-engineering roles. "
                     + "Response format: 1:Y\\n2:N\\n3:Y";
@@ -62,8 +80,10 @@ public class GeminiClient {
     }
 
     private static final String LEVEL_SYSTEM_PROMPT =
-            "Classify each job's level. "
-                    + "L3 = entry-level / new grad / junior, 0-2 years experience, SWE I / L3 / E3 / IC2. "
+            "Classify each job's level based on the title and extracted signals. "
+                    + "L3 = entry-level / new grad / junior. Signals: pursuing or recently completed "
+                    + "degree, graduating soon, new grad program, university/college hiring, "
+                    + "0-1 years experience. "
                     + "L4 = mid-level, 2-5 years experience, SWE II / L4 / E4 / IC3. "
                     + "L3_OR_L4 = ambiguous, could be either entry-level or mid-level. "
                     + "OTHER = senior/staff/principal, management, non-engineering, 6+ YOE. "
@@ -86,20 +106,59 @@ public class GeminiClient {
         return parseResponse(response, batch);
     }
 
-    /** Builds the numbered user prompt with title + truncated description for each job. */
+    /** Builds the numbered user prompt with title + extracted signal snippets from the JD. */
     String buildPrompt(List<JobPosting> batch) {
         StringBuilder sb = new StringBuilder("Classify these job postings:\n\n");
+        int withSignals = 0;
         for (int i = 0; i < batch.size(); i++) {
             JobPosting job = batch.get(i);
-            String desc = job.getDescription() != null ? job.getDescription() : "";
-            String snippet =
-                    desc.length() > DESC_SNIPPET_LENGTH
-                            ? desc.substring(0, DESC_SNIPPET_LENGTH)
-                            : desc;
+            String signals = extractSignals(job.getDescription());
+            if (!"(none)".equals(signals)) {
+                withSignals++;
+            }
+            log.debug("Signal extraction [{}] {}: {}", job.getCompany(), job.getTitle(), signals);
             sb.append(String.format("%d. Title: %s\n", i + 1, job.getTitle()));
-            sb.append(String.format("   Description: %s\n\n", snippet));
+            sb.append(String.format("   Signals: %s\n\n", signals));
         }
+        log.info(
+                "Signal extraction: {}/{} job(s) had signals, {} had none",
+                withSignals,
+                batch.size(),
+                batch.size() - withSignals);
         return sb.toString();
+    }
+
+    /**
+     * Extracts relevant signal snippets from a job description by searching for keywords like
+     * "years", "pursuing", "graduating", etc. Returns up to {@value #MAX_SIGNALS} snippets of
+     * ~{@value #SIGNAL_WINDOW} chars each, or "(none)" if no keywords found.
+     */
+    static String extractSignals(String description) {
+        if (description == null || description.isBlank()) {
+            return "(none)";
+        }
+        // Strip HTML tags for cleaner snippets
+        String clean = HTML_TAG_PATTERN.matcher(description).replaceAll(" ");
+        String lower = clean.toLowerCase(Locale.ROOT);
+
+        Set<String> snippets = new LinkedHashSet<>();
+        for (String keyword : SIGNAL_KEYWORDS) {
+            int idx = 0;
+            while (idx < lower.length() && snippets.size() < MAX_SIGNALS) {
+                int pos = lower.indexOf(keyword, idx);
+                if (pos == -1) break;
+
+                int start = Math.max(0, pos - SIGNAL_WINDOW / 2);
+                int end = Math.min(clean.length(), pos + keyword.length() + SIGNAL_WINDOW / 2);
+                String snippet = clean.substring(start, end).trim().replaceAll("\\s+", " ");
+                snippets.add("\"" + snippet + "\"");
+
+                idx = pos + keyword.length();
+            }
+            if (snippets.size() >= MAX_SIGNALS) break;
+        }
+
+        return snippets.isEmpty() ? "(none)" : String.join(" | ", snippets);
     }
 
     /**

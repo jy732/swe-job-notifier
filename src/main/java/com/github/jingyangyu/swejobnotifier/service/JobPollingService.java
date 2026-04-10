@@ -10,7 +10,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -199,8 +201,13 @@ public class JobPollingService {
     }
 
     private List<JobPosting> dedup(List<JobPosting> jobs, Set<String> knownKeys) {
+        Set<String> seen = new HashSet<>();
         return jobs.stream()
-                .filter(job -> !knownKeys.contains(job.getCompany() + ":" + job.getExternalId()))
+                .filter(
+                        job -> {
+                            String key = job.getCompany() + ":" + job.getExternalId();
+                            return !knownKeys.contains(key) && seen.add(key);
+                        })
                 .toList();
     }
 
@@ -259,8 +266,12 @@ public class JobPollingService {
         Set<String> failedIds =
                 geminiFailed.stream().map(JobPosting::getExternalId).collect(Collectors.toSet());
         Instant now = Instant.now();
-        List<JobPosting> toPersist = new ArrayList<>();
+        Map<String, JobPosting> toPersistMap = new LinkedHashMap<>();
         for (JobPosting job : toProcess) {
+            String key = job.getCompany() + ":" + job.getExternalId();
+            if (toPersistMap.containsKey(key)) {
+                continue; // skip intra-batch duplicates
+            }
             // Merge with any existing row to avoid unique-constraint violations
             // (the in-memory dedup set is a snapshot — duplicates can slip through)
             JobPosting target =
@@ -277,8 +288,9 @@ public class JobPollingService {
                 target.setMidLevel(approvedIds.contains(job.getExternalId()));
                 target.setClassificationFailures(0);
             }
-            toPersist.add(target);
+            toPersistMap.put(key, target);
         }
+        List<JobPosting> toPersist = new ArrayList<>(toPersistMap.values());
         repository.saveAll(toPersist);
         return toPersist.size();
     }

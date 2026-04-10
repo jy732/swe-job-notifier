@@ -9,6 +9,8 @@ import com.github.jingyangyu.swejobnotifier.service.classification.JobTitleFilte
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -217,10 +219,17 @@ public class JobPollingService {
             JobScraper scraper, String company, int scrapedCount, List<JobPosting> unseen) {
         List<JobPosting> autoApproved = new ArrayList<>();
         List<JobPosting> needsGemini = new ArrayList<>();
+        // Shadow: track auto-classified levels for jobs that skip Gemini
+        Map<JobPosting, String> autoLevelMap = new HashMap<>();
         for (JobPosting job : unseen) {
             if (titleFilter.isObviousMidLevel(job)) {
                 autoApproved.add(job);
+                autoLevelMap.put(job, "L4");
             } else {
+                String autoLevel = titleFilter.autoClassifyLevel(job);
+                if (autoLevel != null) {
+                    autoLevelMap.put(job, autoLevel);
+                }
                 needsGemini.add(job);
             }
         }
@@ -234,16 +243,22 @@ public class JobPollingService {
 
         List<JobPosting> geminiApproved = List.of();
         List<JobPosting> geminiFailed = List.of();
+        Map<JobPosting, String> geminiLevelMap = Collections.emptyMap();
         if (!needsGemini.isEmpty()) {
             ClassificationResult result = classifier.classify(needsGemini);
             geminiApproved = result.getApproved();
             geminiFailed = result.getFailed();
+            geminiLevelMap = result.getLevelMap();
         }
+
+        // Merge level maps: auto-classified + Gemini shadow
+        Map<JobPosting, String> levelMap = new HashMap<>(autoLevelMap);
+        levelMap.putAll(geminiLevelMap);
 
         List<JobPosting> allApproved = new ArrayList<>(autoApproved);
         allApproved.addAll(geminiApproved);
 
-        int persisted = persistJobs(unseen, allApproved, geminiFailed);
+        int persisted = persistJobs(unseen, allApproved, geminiFailed, levelMap);
 
         log.info(
                 "[{}] {} — persisted {}, {} failed: {} mid-level ({} auto + {} Gemini)",
@@ -260,7 +275,10 @@ public class JobPollingService {
     }
 
     private int persistJobs(
-            List<JobPosting> toProcess, List<JobPosting> approved, List<JobPosting> geminiFailed) {
+            List<JobPosting> toProcess,
+            List<JobPosting> approved,
+            List<JobPosting> geminiFailed,
+            Map<JobPosting, String> levelMap) {
         Set<String> approvedIds =
                 approved.stream().map(JobPosting::getExternalId).collect(Collectors.toSet());
         Set<String> failedIds =
@@ -288,6 +306,28 @@ public class JobPollingService {
                 target.setMidLevel(approvedIds.contains(job.getExternalId()));
                 target.setClassificationFailures(0);
             }
+
+            // Shadow: set level from 4-way classification
+            String level = levelMap.get(job);
+            if (level != null) {
+                target.setLevel(level);
+                // Log disagreement between old midLevel and new level
+                boolean midLevel = target.isMidLevel();
+                boolean levelSaysL4 = "L4".equals(level) || "L3_OR_L4".equals(level);
+                if (midLevel && !levelSaysL4) {
+                    log.warn(
+                            "SHADOW DISAGREE: midLevel=true but level={} — [{}] {}",
+                            level,
+                            target.getCompany(),
+                            target.getTitle());
+                } else if (!midLevel && "L4".equals(level)) {
+                    log.warn(
+                            "SHADOW DISAGREE: midLevel=false but level=L4 — [{}] {}",
+                            target.getCompany(),
+                            target.getTitle());
+                }
+            }
+
             toPersistMap.put(key, target);
         }
         List<JobPosting> toPersist = new ArrayList<>(toPersistMap.values());

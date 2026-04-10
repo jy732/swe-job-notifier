@@ -60,6 +60,27 @@ public class JobTitleFilter {
         return FilterKeywords.MID_LEVEL_PATTERN.matcher(job.getTitle()).find();
     }
 
+    /**
+     * Tier 2 (structured): Auto-classifies a job's level from the title alone.
+     *
+     * @return "L4" for obvious mid-level, "L3" for obvious entry-level/new-grad, or null if
+     *     ambiguous (needs Gemini).
+     */
+    public String autoClassifyLevel(JobPosting job) {
+        String title = job.getTitle();
+        if (FilterKeywords.L4_PATTERN.matcher(title).find()) {
+            return "L4";
+        }
+        if (FilterKeywords.L3_PATTERN.matcher(title).find()) {
+            return "L3";
+        }
+        String lower = title.toLowerCase(Locale.ROOT);
+        if (FilterKeywords.L3_KEYWORDS.stream().anyMatch(lower::contains)) {
+            return "L3";
+        }
+        return null;
+    }
+
     /** Tier 3 gate: Returns true if the title contains a role keyword + title keyword. */
     public boolean isSweRelevant(JobPosting job) {
         String title = job.getTitle().toLowerCase(Locale.ROOT);

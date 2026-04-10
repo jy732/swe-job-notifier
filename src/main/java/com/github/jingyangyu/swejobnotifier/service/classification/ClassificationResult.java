@@ -1,7 +1,9 @@
 package com.github.jingyangyu.swejobnotifier.service.classification;
 
 import com.github.jingyangyu.swejobnotifier.model.JobPosting;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import lombok.Getter;
 
 /**
@@ -23,8 +25,17 @@ public class ClassificationResult {
     private final List<JobPosting> approved;
     private final List<JobPosting> failed;
 
+    /** Shadow 4-way level classification: job → L3/L4/L3_OR_L4/OTHER. Empty if not run. */
+    private final Map<JobPosting, String> levelMap;
+
     public ClassificationResult(List<JobPosting> approved, List<JobPosting> failed) {
+        this(approved, failed, Collections.emptyMap());
+    }
+
+    public ClassificationResult(
+            List<JobPosting> approved, List<JobPosting> failed, Map<JobPosting, String> levelMap) {
         this.approved = approved;
         this.failed = failed;
+        this.levelMap = levelMap;
     }
 }

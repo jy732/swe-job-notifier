@@ -63,4 +63,7 @@ public class JobPosting {
     @Column(nullable = false)
     @Builder.Default
     private int classificationFailures = 0;
+
+    /** 4-way level classification from shadow Gemini call: L3, L4, L3_OR_L4, OTHER, or null. */
+    private String level;
 }

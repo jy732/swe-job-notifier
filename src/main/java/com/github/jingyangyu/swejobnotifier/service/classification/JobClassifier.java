@@ -4,7 +4,9 @@ import com.github.jingyangyu.swejobnotifier.model.JobPosting;
 import com.github.jingyangyu.swejobnotifier.service.PipelineMetrics;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.retry.support.RetryTemplate;
 import org.springframework.stereotype.Service;
@@ -78,7 +80,64 @@ public class JobClassifier {
                 classified.size(),
                 jobs.size(),
                 failed.size());
-        return new ClassificationResult(classified, failed);
+
+        // Shadow: run 4-way level classification on the same jobs
+        Map<JobPosting, String> levelMap = classifyLevel(jobs);
+
+        return new ClassificationResult(classified, failed, levelMap);
+    }
+
+    /**
+     * Shadow 4-way level classification via a separate Gemini call.
+     *
+     * <p>Runs independently of the primary Y/N classification. Failures are logged but do not
+     * affect the primary flow — levelMap will be empty on failure.
+     */
+    private Map<JobPosting, String> classifyLevel(List<JobPosting> jobs) {
+        if (!geminiClient.isConfigured()) {
+            return Collections.emptyMap();
+        }
+        Map<JobPosting, String> levelMap = new HashMap<>();
+        int totalBatches = (int) Math.ceil((double) jobs.size() / BATCH_SIZE);
+        log.info(
+                "Shadow level classification: {} job(s) in {} batch(es)",
+                jobs.size(),
+                totalBatches);
+
+        for (int i = 0; i < jobs.size(); i += BATCH_SIZE) {
+            int batchNum = (i / BATCH_SIZE) + 1;
+            List<JobPosting> batch = jobs.subList(i, Math.min(i + BATCH_SIZE, jobs.size()));
+            try {
+                Map<JobPosting, String> result =
+                        retryTemplate.execute(
+                                context -> {
+                                    if (context.getRetryCount() > 0) {
+                                        log.warn(
+                                                "Shadow level retry attempt {} for batch of {}",
+                                                context.getRetryCount(),
+                                                batch.size());
+                                    }
+                                    return geminiClient.classifyLevel(batch);
+                                });
+                if (result != null) {
+                    levelMap.putAll(result);
+                    log.info(
+                            "Shadow level batch {}/{}: classified {}",
+                            batchNum,
+                            totalBatches,
+                            result.size());
+                } else {
+                    log.warn("Shadow level batch {}/{} returned null", batchNum, totalBatches);
+                }
+            } catch (Exception e) {
+                log.warn(
+                        "Shadow level batch {}/{} failed after retries: {}",
+                        batchNum,
+                        totalBatches,
+                        e.getMessage());
+            }
+        }
+        return levelMap;
     }
 
     /** Classifies a single batch and appends results to classified/failed lists. */

@@ -3,8 +3,10 @@ package com.github.jingyangyu.swejobnotifier.service.classification;
 import com.github.jingyangyu.swejobnotifier.model.JobPosting;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
@@ -59,6 +61,14 @@ public class GeminiClient {
         }
     }
 
+    private static final String LEVEL_SYSTEM_PROMPT =
+            "Classify each job's level. "
+                    + "L3 = entry-level / new grad / junior, 0-2 years experience, SWE I / L3 / E3 / IC2. "
+                    + "L4 = mid-level, 2-5 years experience, SWE II / L4 / E4 / IC3. "
+                    + "L3_OR_L4 = ambiguous, could be either entry-level or mid-level. "
+                    + "OTHER = senior/staff/principal, management, non-engineering, 6+ YOE. "
+                    + "Response format: 1:L4\\n2:L3\\n3:OTHER\\n4:L3_OR_L4";
+
     /** Returns true if the Gemini API key is configured and non-blank. */
     public boolean isConfigured() {
         return apiKey != null && !apiKey.isBlank();
@@ -92,11 +102,67 @@ public class GeminiClient {
         return sb.toString();
     }
 
+    /**
+     * Sends a batch of jobs to Gemini for 4-way level classification (shadow flow).
+     *
+     * @return map of job to level string (L3/L4/L3_OR_L4/OTHER), or {@code null} if API call
+     *     failed.
+     */
+    @SuppressWarnings("unchecked")
+    public Map<JobPosting, String> classifyLevel(List<JobPosting> batch) {
+        Map<String, Object> response = callApi(buildPrompt(batch), LEVEL_SYSTEM_PROMPT);
+        return parseLevelResponse(response, batch);
+    }
+
+    @SuppressWarnings("unchecked")
+    Map<JobPosting, String> parseLevelResponse(
+            Map<String, Object> response, List<JobPosting> batch) {
+        if (response == null) {
+            return null;
+        }
+        try {
+            List<Map<String, Object>> candidates =
+                    (List<Map<String, Object>>) response.get("candidates");
+            if (candidates == null || candidates.isEmpty()) {
+                return null;
+            }
+            Map<String, Object> content = (Map<String, Object>) candidates.get(0).get("content");
+            List<Map<String, Object>> parts = (List<Map<String, Object>>) content.get("parts");
+            String text = parts.get(0).get("text").toString().trim();
+
+            log.debug("Gemini level raw response: {}", text);
+
+            Set<String> validLevels = Set.of("L3", "L4", "L3_OR_L4", "OTHER");
+            Map<JobPosting, String> result = new HashMap<>();
+            for (String line : text.split("\n")) {
+                line = line.trim();
+                if (line.isEmpty()) continue;
+                String[] tokens = line.split(":");
+                if (tokens.length == 2) {
+                    int index = Integer.parseInt(tokens[0].trim()) - 1;
+                    String level = tokens[1].trim().toUpperCase();
+                    if (validLevels.contains(level) && index >= 0 && index < batch.size()) {
+                        result.put(batch.get(index), level);
+                    }
+                }
+            }
+            log.info("Gemini level-classified {}/{} job(s)", result.size(), batch.size());
+            return result;
+        } catch (Exception e) {
+            log.warn("Failed to parse Gemini level response", e);
+            return null;
+        }
+    }
+
     private Map<String, Object> callApi(String userPrompt) {
+        return callApi(userPrompt, SYSTEM_PROMPT);
+    }
+
+    private Map<String, Object> callApi(String userPrompt, String systemPrompt) {
         Map<String, Object> requestBody =
                 Map.of(
                         "system_instruction",
-                        Map.of("parts", List.of(Map.of("text", SYSTEM_PROMPT))),
+                        Map.of("parts", List.of(Map.of("text", systemPrompt))),
                         "contents",
                         List.of(
                                 Map.of(

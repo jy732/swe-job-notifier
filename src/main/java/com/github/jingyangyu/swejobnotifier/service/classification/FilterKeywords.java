@@ -13,7 +13,10 @@ final class FilterKeywords {
 
     private FilterKeywords() {}
 
-    // ── Tier 1: Exclude titles containing any of these (case-insensitive) ──
+    // ── Tier 1: Hard exclude — neither L3 nor L4, drop completely ──
+    // Seniority: senior/staff/principal/lead/management
+    // Role mismatch: frontend, mobile, embedded, security
+    // Internship (distinct from new grad/entry-level)
     static final List<String> EXCLUDE_KEYWORDS =
             List.of(
                     "senior",
@@ -30,11 +33,7 @@ final class FilterKeywords {
                     "chief",
                     "intern",
                     "internship",
-                    "new grad",
                     "co-op",
-                    "university",
-                    "graduate",
-                    "college",
                     "frontend",
                     "front-end",
                     "mobile",
@@ -43,14 +42,38 @@ final class FilterKeywords {
                     "embedded",
                     "security");
 
-    // ── Tier 2: Auto-approve obvious mid-level SWE titles ──
+    // ── Tier 2a: Auto-classify as L4 (mid-level) — skip Gemini ──
     // Matches: "Software Engineer II", "SDE II", "SWE 2", "Backend Developer II", etc.
-    static final Pattern MID_LEVEL_PATTERN =
+    static final Pattern L4_PATTERN =
             Pattern.compile(
                     "(?i)(software|backend|back-end|fullstack|full-stack"
                             + "|full stack|platform|infrastructure|swe|sde)"
                             + ".*?(engineer|developer|eng).*?"
                             + "(\\bii\\b|\\b2\\b|\\bl4\\b|\\be4\\b|\\bic3\\b)");
+
+    // ── Tier 2b: Auto-classify as L3 (entry-level / new grad) — skip Gemini ──
+    // Matches: "Software Engineer I" (not II), "SDE 1", "Junior SWE", "New Grad Engineer", etc.
+    static final Pattern L3_PATTERN =
+            Pattern.compile(
+                    "(?i)(software|backend|back-end|fullstack|full-stack"
+                            + "|full stack|platform|infrastructure|swe|sde)"
+                            + ".*?(engineer|developer|eng).*?"
+                            + "(\\bi\\b(?!i)|\\b1\\b|\\bl3\\b|\\be3\\b|\\bic2\\b)");
+
+    // Keywords that indicate entry-level regardless of title structure
+    static final List<String> L3_KEYWORDS =
+            List.of(
+                    "new grad",
+                    "new graduate",
+                    "entry level",
+                    "entry-level",
+                    "junior",
+                    "university",
+                    "graduate",
+                    "college");
+
+    // Kept for backward compatibility — same regex as L4_PATTERN
+    static final Pattern MID_LEVEL_PATTERN = L4_PATTERN;
 
     // ── Tier 3: SWE-relevant titles must contain one ROLE + one TITLE keyword ──
     static final List<String> ROLE_KEYWORDS =

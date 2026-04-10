@@ -25,6 +25,20 @@ public interface JobPostingRepository extends JpaRepository<JobPosting, Long> {
 
     List<JobPosting> findByMidLevelTrueAndNotifiedFalseOrderByDetectedAtDesc();
 
+    /** Finds unnotified L3 jobs (entry-level). L3_OR_L4 is included since it goes to both. */
+    @Query(
+            "SELECT jp FROM JobPosting jp WHERE jp.notified = false"
+                    + " AND (jp.level = 'L3' OR jp.level = 'L3_OR_L4')"
+                    + " ORDER BY jp.detectedAt DESC")
+    List<JobPosting> findUnnotifiedL3Jobs();
+
+    /** Recent L3 jobs for daily summary. */
+    @Query(
+            "SELECT jp FROM JobPosting jp WHERE jp.detectedAt > ?1"
+                    + " AND (jp.level = 'L3' OR jp.level = 'L3_OR_L4')"
+                    + " ORDER BY jp.detectedAt DESC")
+    List<JobPosting> findRecentL3Jobs(Instant since);
+
     /** Finds jobs that failed Gemini classification but haven't exhausted retries yet. */
     List<JobPosting> findByClassificationFailuresGreaterThanAndClassificationFailuresLessThan(
             int min, int max);

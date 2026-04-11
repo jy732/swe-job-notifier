@@ -284,6 +284,16 @@ public class JobPollingService {
         Set<String> failedIds =
                 geminiFailed.stream().map(JobPosting::getExternalId).collect(Collectors.toSet());
         Instant now = Instant.now();
+        // Batch-load existing rows in 1 query (replaces N per-job lookups)
+        Set<String> lookupKeys =
+                toProcess.stream()
+                        .map(j -> j.getCompany() + ":" + j.getExternalId())
+                        .collect(Collectors.toSet());
+        Map<String, JobPosting> existingMap =
+                repository.findByCompanyExternalIdKeys(lookupKeys).stream()
+                        .collect(
+                                Collectors.toMap(
+                                        j -> j.getCompany() + ":" + j.getExternalId(), j -> j));
         Map<String, JobPosting> toPersistMap = new LinkedHashMap<>();
         for (JobPosting job : toProcess) {
             String key = job.getCompany() + ":" + job.getExternalId();
@@ -292,10 +302,7 @@ public class JobPollingService {
             }
             // Merge with any existing row to avoid unique-constraint violations
             // (the in-memory dedup set is a snapshot — duplicates can slip through)
-            JobPosting target =
-                    repository
-                            .findByCompanyAndExternalId(job.getCompany(), job.getExternalId())
-                            .orElse(job);
+            JobPosting target = existingMap.getOrDefault(key, job);
             if (target.getDetectedAt() == null) {
                 target.setDetectedAt(now);
             }

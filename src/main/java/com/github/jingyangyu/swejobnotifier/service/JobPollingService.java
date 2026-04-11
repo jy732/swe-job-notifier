@@ -148,7 +148,7 @@ public class JobPollingService {
         try {
             return future.get(COMPANY_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
         } catch (Exception e) {
-            future.cancel(true);
+            future.cancel(false);
             metrics.recordScrapeFail();
             if (e instanceof java.util.concurrent.TimeoutException) {
                 log.warn(

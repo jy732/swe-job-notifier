@@ -10,7 +10,7 @@ Automated job posting monitor that scrapes career pages, filters for mid-level a
 2. **Pre-filter** — Removes stale postings, non-US locations, excluded titles (management, intern, staff+), and non-SWE roles
 3. **Dedup** — Loads all known job keys into an in-memory set once per poll cycle for O(1) lookups (no per-job DB queries)
 4. **Auto-approve** — Titles containing explicit level indicators (e.g. "SWE II", "L4") are approved without AI; entry-level indicators (e.g. "New Grad", "SWE I") are classified as L3
-5. **Gemini classify** — Ambiguous titles are sent to Gemini 2.5 Flash in batches of 50 for 4-way level classification (L3/L4/L3_OR_L4/OTHER). Signal-based snippet extraction searches both the job title and description for keywords ("years", "pursuing", "graduating", "new grad", "university", "college") and sends ~200-char context windows instead of truncated descriptions. All 15 scrapers now capture job descriptions (Playwright scrapers fetch detail pages, API scrapers extract from responses). `midLevel` is derived from level: L4 or L3_OR_L4 → true
+5. **Gemini classify** — Ambiguous titles are sent to Gemini 2.5 Flash in batches of 50 for 4-way level classification (L3/L4/L3_OR_L4/OTHER). `SignalExtractor` searches both the job title and description for 12 consolidated keywords ("years", "pursuing", "graduating", "new grad", "entry level", "junior", "university", "college", etc.) and returns structured `Signal` records with ~200-char context snippets. The same keyword list drives both local L3 auto-classification and Gemini prompt building. `midLevel` is derived from level: L4 or L3_OR_L4 → true
 6. **Persist** — All jobs batch-saved to H2 via `saveAll()` with batch-loaded existing rows (single query, no N+1); Gemini failures are retried on subsequent polls (auto-approved as L4 after 3 failures)
 7. **Email alert** — Independent 5-minute scan sends L4 alerts to primary recipients and L3/new-grad alerts to a separate recipient list
 
@@ -162,9 +162,11 @@ src/main/java/com/github/jingyangyu/swejobnotifier/
 │   └── classification/
 │       ├── ClassificationResult.java       # Gemini response + level map
 │       ├── FilterKeywords.java             # Title patterns (L3/L4) and excluded keywords
-│       ├── GeminiClient.java               # Gemini API client + signal extraction from title & JD
+│       ├── GeminiClient.java               # Gemini API client (prompt building + HTTP)
 │       ├── JobClassifier.java              # Batch 4-way level classification orchestrator
-│       └── JobTitleFilter.java             # Local pre-filter + auto level classification
+│       ├── JobTitleFilter.java             # Local pre-filter + auto level classification
+│       ├── Signal.java                     # Record: keyword + snippet + source (TITLE/DESCRIPTION)
+│       └── SignalExtractor.java            # Extracts level signals from title & JD for Gemini prompts
 └── util/
     └── CsvUtil.java                        # CSV export utility
 ```

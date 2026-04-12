@@ -2,12 +2,9 @@ package com.github.jingyangyu.swejobnotifier.service.classification;
 
 import com.github.jingyangyu.swejobnotifier.model.JobPosting;
 import java.util.HashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Pattern;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
@@ -22,29 +19,12 @@ import org.springframework.web.reactive.function.client.WebClient;
  * batching, rate limiting, or retry — that orchestration lives in {@link JobClassifier}.
  *
  * <p>Uses a single 4-way level classification (L3/L4/L3_OR_L4/OTHER) per batch. The system prompt
- * instructs Gemini to respond in a strict {@code "1:L4\n2:L3\n3:OTHER"} format. Signal snippets are
- * extracted from both title and description to maximize coverage.
+ * instructs Gemini to respond in a strict {@code "1:L4\n2:L3\n3:OTHER"} format. Signal extraction
+ * is delegated to {@link SignalExtractor}.
  */
 @Slf4j
 @Component
 public class GeminiClient {
-
-    private static final int SIGNAL_WINDOW = 200;
-    private static final int MAX_SIGNALS = 3;
-
-    /** Signal keywords to search for in job descriptions. */
-    private static final List<String> SIGNAL_KEYWORDS =
-            List.of(
-                    "years",
-                    "pursuing",
-                    "graduating",
-                    "graduation",
-                    "new grad",
-                    "university",
-                    "college");
-
-    /** Pattern to strip HTML tags from description snippets. */
-    private static final Pattern HTML_TAG_PATTERN = Pattern.compile("<[^>]+>");
 
     private final WebClient webClient;
     private final String apiKey;
@@ -83,27 +63,22 @@ public class GeminiClient {
     }
 
     /**
-     * Builds the numbered user prompt with title + extracted signal snippets from the title and JD.
-     * Signals are extracted from both the title and description to maximize coverage — many
-     * scrapers don't capture descriptions, but titles like "New College Grad" still contain useful
-     * keywords.
+     * Builds the numbered user prompt with title + extracted signal snippets. Signal extraction is
+     * delegated to {@link SignalExtractor} which searches both the title and description.
      */
     String buildPrompt(List<JobPosting> batch) {
         StringBuilder sb = new StringBuilder("Classify these job postings:\n\n");
         int withSignals = 0;
         for (int i = 0; i < batch.size(); i++) {
             JobPosting job = batch.get(i);
-            String combined =
-                    (job.getTitle() != null ? job.getTitle() : "")
-                            + "\n"
-                            + (job.getDescription() != null ? job.getDescription() : "");
-            String signals = extractSignals(combined);
-            if (!"(none)".equals(signals)) {
+            List<Signal> signals = SignalExtractor.extract(job);
+            String formatted = SignalExtractor.format(signals);
+            if (!signals.isEmpty()) {
                 withSignals++;
             }
-            log.debug("Signal extraction [{}] {}: {}", job.getCompany(), job.getTitle(), signals);
+            log.debug("Signal extraction [{}] {}: {}", job.getCompany(), job.getTitle(), formatted);
             sb.append(String.format("%d. Title: %s\n", i + 1, job.getTitle()));
-            sb.append(String.format("   Signals: %s\n\n", signals));
+            sb.append(String.format("   Signals: %s\n\n", formatted));
         }
         log.info(
                 "Signal extraction: {}/{} job(s) had signals, {} had none",
@@ -111,39 +86,6 @@ public class GeminiClient {
                 batch.size(),
                 batch.size() - withSignals);
         return sb.toString();
-    }
-
-    /**
-     * Extracts relevant signal snippets from a job description by searching for keywords like
-     * "years", "pursuing", "graduating", etc. Returns up to {@value #MAX_SIGNALS} snippets of
-     * ~{@value #SIGNAL_WINDOW} chars each, or "(none)" if no keywords found.
-     */
-    static String extractSignals(String description) {
-        if (description == null || description.isBlank()) {
-            return "(none)";
-        }
-        // Strip HTML tags for cleaner snippets
-        String clean = HTML_TAG_PATTERN.matcher(description).replaceAll(" ");
-        String lower = clean.toLowerCase(Locale.ROOT);
-
-        Set<String> snippets = new LinkedHashSet<>();
-        for (String keyword : SIGNAL_KEYWORDS) {
-            int idx = 0;
-            while (idx < lower.length() && snippets.size() < MAX_SIGNALS) {
-                int pos = lower.indexOf(keyword, idx);
-                if (pos == -1) break;
-
-                int start = Math.max(0, pos - SIGNAL_WINDOW / 2);
-                int end = Math.min(clean.length(), pos + keyword.length() + SIGNAL_WINDOW / 2);
-                String snippet = clean.substring(start, end).trim().replaceAll("\\s+", " ");
-                snippets.add("\"" + snippet + "\"");
-
-                idx = pos + keyword.length();
-            }
-            if (snippets.size() >= MAX_SIGNALS) break;
-        }
-
-        return snippets.isEmpty() ? "(none)" : String.join(" | ", snippets);
     }
 
     /**

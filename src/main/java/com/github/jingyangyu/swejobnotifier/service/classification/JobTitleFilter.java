@@ -74,8 +74,7 @@ public class JobTitleFilter {
         if (FilterKeywords.L3_PATTERN.matcher(title).find()) {
             return "L3";
         }
-        String lower = title.toLowerCase(Locale.ROOT);
-        if (FilterKeywords.L3_KEYWORDS.stream().anyMatch(lower::contains)) {
+        if (SignalExtractor.hasL3TitleKeyword(title)) {
             return "L3";
         }
         return null;

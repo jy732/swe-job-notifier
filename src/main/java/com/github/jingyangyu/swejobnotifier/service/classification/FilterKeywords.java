@@ -60,18 +60,6 @@ final class FilterKeywords {
                             + ".*?(engineer|developer|eng).*?"
                             + "(\\bi\\b(?!i)|\\b1\\b|\\bl3\\b|\\be3\\b|\\bic2\\b)");
 
-    // Keywords that indicate entry-level regardless of title structure
-    static final List<String> L3_KEYWORDS =
-            List.of(
-                    "new grad",
-                    "new graduate",
-                    "entry level",
-                    "entry-level",
-                    "junior",
-                    "university",
-                    "graduate",
-                    "college");
-
     // Kept for backward compatibility — same regex as L4_PATTERN
     static final Pattern MID_LEVEL_PATTERN = L4_PATTERN;
 

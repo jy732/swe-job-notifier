@@ -10,8 +10,8 @@ Automated job posting monitor that scrapes career pages, filters for mid-level a
 2. **Pre-filter** — Removes stale postings, non-US locations, excluded titles (management, intern, staff+), and non-SWE roles
 3. **Dedup** — Loads all known job keys into an in-memory set once per poll cycle for O(1) lookups (no per-job DB queries)
 4. **Auto-approve** — Titles containing explicit level indicators (e.g. "SWE II", "L4") are approved without AI; entry-level indicators (e.g. "New Grad", "SWE I") are classified as L3
-5. **Gemini classify** — Ambiguous titles are sent to Gemini 2.5 Flash in batches of 50. Signal-based snippet extraction searches JDs for keywords ("years", "pursuing", "graduating", "new grad", "university", "college") and sends ~200-char context windows instead of truncated descriptions. Dual classification: Y/N for mid-level (primary) + L3/L4/L3_OR_L4/OTHER shadow classification for comparison
-6. **Persist** — All jobs batch-saved to H2 via `saveAll()` with batch-loaded existing rows (single query, no N+1); Gemini failures are retried on subsequent polls (auto-approved after 3 failures)
+5. **Gemini classify** — Ambiguous titles are sent to Gemini 2.5 Flash in batches of 50 for 4-way level classification (L3/L4/L3_OR_L4/OTHER). Signal-based snippet extraction searches both the job title and description for keywords ("years", "pursuing", "graduating", "new grad", "university", "college") and sends ~200-char context windows instead of truncated descriptions. All 15 scrapers now capture job descriptions (Playwright scrapers fetch detail pages, API scrapers extract from responses). `midLevel` is derived from level: L4 or L3_OR_L4 → true
+6. **Persist** — All jobs batch-saved to H2 via `saveAll()` with batch-loaded existing rows (single query, no N+1); Gemini failures are retried on subsequent polls (auto-approved as L4 after 3 failures)
 7. **Email alert** — Independent 5-minute scan sends L4 alerts to primary recipients and L3/new-grad alerts to a separate recipient list
 
 ### End-to-End Workflow
@@ -26,13 +26,13 @@ flowchart TD
     SWE --> DEDUP{"Already\nin DB?"}
     DEDUP -- Yes --> SKIP([Skip])
     DEDUP -- No --> AUTO{"Obvious\nmid-level title?"}
-    AUTO -- Yes --> APPROVED["Mid-level = YES"]
-    AUTO -- No --> GEMINI["Gemini 2.5 Flash\nclassify in batches of 50"]
-    GEMINI -- Approved --> APPROVED
-    GEMINI -- Rejected --> REJECTED["Mid-level = NO"]
+    AUTO -- "L4/L3" --> LEVEL["Level assigned\n(L3/L4)"]
+    AUTO -- Ambiguous --> GEMINI["Gemini 2.5 Flash\n4-way classify in batches of 50"]
+    GEMINI -- "L3/L4/L3_OR_L4" --> LEVEL
+    GEMINI -- OTHER --> OTHER["Level = OTHER"]
     GEMINI -- API failed --> FAILED["Classification failed\nfailures++"]
-    APPROVED --> DB[("H2 Database")]
-    REJECTED --> DB
+    LEVEL --> DB[("H2 Database")]
+    OTHER --> DB
     FAILED --> DB
     DB --> RETRYCHECK{"Failed\n>= 3 times?"}
     RETRYCHECK -- Yes --> FALLBACK["Auto-approve\nas mid-level"] --> DB
@@ -162,8 +162,8 @@ src/main/java/com/github/jingyangyu/swejobnotifier/
 │   └── classification/
 │       ├── ClassificationResult.java       # Gemini response + level map
 │       ├── FilterKeywords.java             # Title patterns (L3/L4) and excluded keywords
-│       ├── GeminiClient.java               # Gemini API client + signal-based snippet extraction
-│       ├── JobClassifier.java              # Batch classification orchestrator (Y/N + shadow L3/L4)
+│       ├── GeminiClient.java               # Gemini API client + signal extraction from title & JD
+│       ├── JobClassifier.java              # Batch 4-way level classification orchestrator
 │       └── JobTitleFilter.java             # Local pre-filter + auto level classification
 └── util/
     └── CsvUtil.java                        # CSV export utility

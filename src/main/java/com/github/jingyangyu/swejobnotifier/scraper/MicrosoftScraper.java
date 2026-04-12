@@ -122,15 +122,25 @@ public class MicrosoftScraper implements JobScraper {
             postedDate = Instant.ofEpochSecond(num.longValue());
         }
 
+        String description = "";
+        Object desc = pos.get("description");
+        if (desc instanceof String descStr) {
+            description = stripHtml(descStr);
+        }
+
         return JobPosting.builder()
                 .company("microsoft")
                 .externalId(id)
                 .title(title)
                 .url(url)
                 .location(location)
-                .description("")
+                .description(description)
                 .postedDate(postedDate)
                 .detectedAt(Instant.now())
                 .build();
+    }
+
+    private static String stripHtml(String html) {
+        return html.replaceAll("<[^>]+>", " ").replaceAll("\\s+", " ").trim();
     }
 }

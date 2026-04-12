@@ -128,6 +128,7 @@ public class GoogleScraper implements JobScraper {
                 }
 
                 for (Map<String, String> job : jobs) {
+                    String description = fetchJobDescription(page, job.getOrDefault("url", ""));
                     allJobs.add(
                             JobPosting.builder()
                                     .company("google")
@@ -135,7 +136,7 @@ public class GoogleScraper implements JobScraper {
                                     .title(job.getOrDefault("title", ""))
                                     .url(job.getOrDefault("url", ""))
                                     .location(job.getOrDefault("location", ""))
-                                    .description("")
+                                    .description(description)
                                     .postedDate(null)
                                     .detectedAt(Instant.now())
                                     .build());
@@ -149,6 +150,36 @@ public class GoogleScraper implements JobScraper {
         } catch (Exception e) {
             log.error("Failed to scrape Google careers", e);
             return allJobs;
+        }
+    }
+
+    /**
+     * Navigates to a Google Careers job detail page and extracts the description text. Returns
+     * empty string on any failure — a missing description is acceptable since the title and Gemini
+     * can still classify based on title alone.
+     */
+    private String fetchJobDescription(Page page, String jobUrl) {
+        if (jobUrl == null || jobUrl.isBlank()) {
+            return "";
+        }
+        try {
+            page.navigate(
+                    jobUrl, new Page.NavigateOptions().setWaitUntil(WaitUntilState.NETWORKIDLE));
+            Object result =
+                    page.evaluate(
+                            "() => {\n"
+                                    + "  const sections = document.querySelectorAll("
+                                    + "'section, [role=\"main\"], article');\n"
+                                    + "  for (const s of sections) {\n"
+                                    + "    const text = s.innerText || '';\n"
+                                    + "    if (text.length > 100) return text.substring(0, 2000);\n"
+                                    + "  }\n"
+                                    + "  return document.body?.innerText?.substring(0, 2000) || '';\n"
+                                    + "}");
+            return result instanceof String s ? s.replaceAll("\\s+", " ").trim() : "";
+        } catch (Exception e) {
+            log.debug("Google: failed to fetch description for {}: {}", jobUrl, e.getMessage());
+            return "";
         }
     }
 }

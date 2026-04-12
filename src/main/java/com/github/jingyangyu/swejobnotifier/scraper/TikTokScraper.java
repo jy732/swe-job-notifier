@@ -119,6 +119,7 @@ public class TikTokScraper implements JobScraper {
 
             if (jobs != null) {
                 for (Map<String, String> job : jobs) {
+                    String description = fetchJobDescription(page, job.getOrDefault("url", ""));
                     allJobs.add(
                             JobPosting.builder()
                                     .company("tiktok")
@@ -126,7 +127,7 @@ public class TikTokScraper implements JobScraper {
                                     .title(job.getOrDefault("title", ""))
                                     .url(job.getOrDefault("url", ""))
                                     .location(job.getOrDefault("location", ""))
-                                    .description("")
+                                    .description(description)
                                     .postedDate(null)
                                     .detectedAt(Instant.now())
                                     .build());
@@ -138,5 +139,38 @@ public class TikTokScraper implements JobScraper {
 
         log.info("TikTok: scraped {} total job(s)", allJobs.size());
         return allJobs;
+    }
+
+    /**
+     * Navigates to a TikTok job detail page and extracts the description text. Returns empty string
+     * on any failure — a missing description is acceptable since the title and Gemini can still
+     * classify based on title alone.
+     */
+    private String fetchJobDescription(Page page, String jobUrl) {
+        if (jobUrl == null || jobUrl.isBlank()) {
+            return "";
+        }
+        try {
+            page.navigate(
+                    jobUrl,
+                    new Page.NavigateOptions()
+                            .setWaitUntil(WaitUntilState.NETWORKIDLE)
+                            .setTimeout(15000));
+            Object result =
+                    page.evaluate(
+                            "() => {\n"
+                                    + "  const sections = document.querySelectorAll("
+                                    + "'section, [role=\"main\"], article, .job-detail');\n"
+                                    + "  for (const s of sections) {\n"
+                                    + "    const text = s.innerText || '';\n"
+                                    + "    if (text.length > 100) return text.substring(0, 2000);\n"
+                                    + "  }\n"
+                                    + "  return document.body?.innerText?.substring(0, 2000) || '';\n"
+                                    + "}");
+            return result instanceof String s ? s.replaceAll("\\s+", " ").trim() : "";
+        } catch (Exception e) {
+            log.debug("TikTok: failed to fetch description for {}: {}", jobUrl, e.getMessage());
+            return "";
+        }
     }
 }

@@ -54,7 +54,7 @@ public class JobPosting {
     @Builder.Default
     private boolean notified = false;
 
-    /** Whether this job was classified as mid-level SWE by Gemini (Y). */
+    /** Whether this job is mid-level SWE. Derived from {@code level}: L4 or L3_OR_L4 → true. */
     @Column(nullable = false, columnDefinition = "BOOLEAN DEFAULT TRUE")
     @Builder.Default
     private boolean midLevel = false;
@@ -64,6 +64,6 @@ public class JobPosting {
     @Builder.Default
     private int classificationFailures = 0;
 
-    /** 4-way level classification from shadow Gemini call: L3, L4, L3_OR_L4, OTHER, or null. */
+    /** 4-way level classification: L3, L4, L3_OR_L4, OTHER, or null if not yet classified. */
     private String level;
 }

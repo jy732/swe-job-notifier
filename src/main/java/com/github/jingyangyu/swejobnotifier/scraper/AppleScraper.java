@@ -109,12 +109,16 @@ public class AppleScraper implements JobScraper {
                                                 + "        loc = j.locations;\n"
                                                 + "      }\n"
                                                 + "      const pid = j.positionId || j.reqId || '';\n"
+                                                + "      let desc = '';\n"
+                                                + "      if (typeof j.jobSummary === 'string') desc = j.jobSummary;\n"
+                                                + "      else if (typeof j.description === 'string') desc = j.description;\n"
                                                 + "      return {\n"
                                                 + "        id: String(pid),\n"
                                                 + "        title: j.postingTitle || j.transformedPostingTitle || '',\n"
                                                 + "        url: '/en-us/details/' + pid,\n"
                                                 + "        location: loc,\n"
                                                 + "        date: j.postingDate || j.postDateInGMT || '',\n"
+                                                + "        description: desc,\n"
                                                 + "        _keys: keys.join(',')\n"
                                                 + "      };\n"
                                                 + "    });\n"
@@ -133,6 +137,8 @@ public class AppleScraper implements JobScraper {
                     if (!jobUrl.startsWith("http")) {
                         jobUrl = "https://jobs.apple.com" + jobUrl;
                     }
+                    String description =
+                            stripHtml(String.valueOf(job.getOrDefault("description", "")));
                     allJobs.add(
                             JobPosting.builder()
                                     .company("apple")
@@ -140,7 +146,7 @@ public class AppleScraper implements JobScraper {
                                     .title(String.valueOf(job.getOrDefault("title", "")))
                                     .url(jobUrl)
                                     .location(String.valueOf(job.getOrDefault("location", "")))
-                                    .description("")
+                                    .description(description)
                                     .postedDate(
                                             parseDate(String.valueOf(job.getOrDefault("date", ""))))
                                     .detectedAt(Instant.now())
@@ -156,6 +162,10 @@ public class AppleScraper implements JobScraper {
             log.error("Failed to scrape Apple jobs", e);
             return allJobs;
         }
+    }
+
+    private static String stripHtml(String html) {
+        return html.replaceAll("<[^>]+>", " ").replaceAll("\\s+", " ").trim();
     }
 
     private static Instant parseDate(String dateStr) {

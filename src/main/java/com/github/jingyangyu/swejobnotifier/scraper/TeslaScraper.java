@@ -134,6 +134,7 @@ public class TeslaScraper implements JobScraper {
 
             if (jobs != null) {
                 for (Map<String, String> job : jobs) {
+                    String description = fetchJobDescription(page, job.getOrDefault("url", ""));
                     allJobs.add(
                             JobPosting.builder()
                                     .company("tesla")
@@ -141,7 +142,7 @@ public class TeslaScraper implements JobScraper {
                                     .title(job.getOrDefault("title", ""))
                                     .url(job.getOrDefault("url", ""))
                                     .location(job.getOrDefault("location", ""))
-                                    .description("")
+                                    .description(description)
                                     .postedDate(null)
                                     .detectedAt(Instant.now())
                                     .build());
@@ -153,5 +154,37 @@ public class TeslaScraper implements JobScraper {
 
         log.info("Tesla: scraped {} total job(s)", allJobs.size());
         return allJobs;
+    }
+
+    /**
+     * Navigates to a Tesla job detail page and extracts the description text. Returns empty string
+     * on any failure — Tesla's Akamai WAF may also block detail page loads.
+     */
+    private String fetchJobDescription(Page page, String jobUrl) {
+        if (jobUrl == null || jobUrl.isBlank()) {
+            return "";
+        }
+        try {
+            page.navigate(
+                    jobUrl,
+                    new Page.NavigateOptions()
+                            .setWaitUntil(WaitUntilState.NETWORKIDLE)
+                            .setTimeout(15000));
+            Object result =
+                    page.evaluate(
+                            "() => {\n"
+                                    + "  const sections = document.querySelectorAll("
+                                    + "'section, [role=\"main\"], article');\n"
+                                    + "  for (const s of sections) {\n"
+                                    + "    const text = s.innerText || '';\n"
+                                    + "    if (text.length > 100) return text.substring(0, 2000);\n"
+                                    + "  }\n"
+                                    + "  return document.body?.innerText?.substring(0, 2000) || '';\n"
+                                    + "}");
+            return result instanceof String s ? s.replaceAll("\\s+", " ").trim() : "";
+        } catch (Exception e) {
+            log.debug("Tesla: failed to fetch description for {}: {}", jobUrl, e.getMessage());
+            return "";
+        }
     }
 }

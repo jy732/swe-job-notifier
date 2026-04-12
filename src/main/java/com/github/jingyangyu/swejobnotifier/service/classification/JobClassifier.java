@@ -17,13 +17,16 @@ import org.springframework.stereotype.Service;
  * <p>This class handles the "how" of classification (batching, pacing, error handling) while {@link
  * GeminiClient} handles the "what" (API calls, prompt building, response parsing).
  *
+ * <p>Uses a single 4-way level classification (L3/L4/L3_OR_L4/OTHER) per batch instead of separate
+ * Y/N and level calls. The caller derives {@code midLevel} from the level.
+ *
  * <p>Design decisions:
  *
  * <ul>
  *   <li>Jobs are sent in batches of {@value #BATCH_SIZE} to stay within token limits.
  *   <li>Each batch is retried up to 3 times with exponential backoff (5s -> 10s -> 20s).
- *   <li>When no API key is configured, all pre-filtered jobs are returned as approved — this lets
- *       the app run in dev mode without Gemini, relying solely on local title filters.
+ *   <li>When no API key is configured, all pre-filtered jobs are returned as L4 — this lets the app
+ *       run in dev mode without Gemini, relying solely on local title filters.
  * </ul>
  */
 @Slf4j
@@ -44,139 +47,80 @@ public class JobClassifier {
     }
 
     /**
-     * Classifies a list of job postings via Gemini in batches.
+     * Classifies a list of job postings via Gemini's 4-way level classification in batches.
      *
-     * <p>Returns a {@link ClassificationResult} separating approved jobs from failed ones. The
-     * caller uses this to decide persistence: approved and rejected jobs are persisted for dedup,
-     * while failed jobs are left unpersisted so they retry on the next poll.
+     * <p>Returns a {@link ClassificationResult} containing the level map and failed jobs. The
+     * caller derives {@code midLevel} from the level (L4 or L3_OR_L4 → mid-level).
      *
-     * <p>If no API key is configured, all jobs are returned as "approved" — this is intentional so
-     * the app can run in dev mode without Gemini, relying solely on local title filters.
+     * <p>If no API key is configured, all jobs are mapped to "L4" — this is intentional so the app
+     * can run in dev mode without Gemini, relying solely on local title filters.
      */
     public ClassificationResult classify(List<JobPosting> jobs) {
         if (jobs.isEmpty()) {
-            return new ClassificationResult(Collections.emptyList(), Collections.emptyList());
+            return new ClassificationResult(Collections.emptyMap(), Collections.emptyList());
         }
         if (!geminiClient.isConfigured()) {
-            log.warn(
-                    "Gemini API key not configured — returning all {} jobs unclassified",
-                    jobs.size());
-            return new ClassificationResult(jobs, Collections.emptyList());
+            log.warn("Gemini API key not configured — returning all {} jobs as L4", jobs.size());
+            Map<JobPosting, String> allL4 = new HashMap<>();
+            jobs.forEach(j -> allL4.put(j, "L4"));
+            return new ClassificationResult(allL4, Collections.emptyList());
         }
 
         int totalBatches = (int) Math.ceil((double) jobs.size() / BATCH_SIZE);
         log.info("Gemini classification: {} job(s) in {} batch(es)", jobs.size(), totalBatches);
-        List<JobPosting> classified = new ArrayList<>();
+        Map<JobPosting, String> levelMap = new HashMap<>();
         List<JobPosting> failed = new ArrayList<>();
 
         for (int i = 0; i < jobs.size(); i += BATCH_SIZE) {
             int batchNum = (i / BATCH_SIZE) + 1;
             List<JobPosting> batch = jobs.subList(i, Math.min(i + BATCH_SIZE, jobs.size()));
-            processBatch(batch, batchNum, totalBatches, classified, failed);
-        }
-
-        log.info(
-                "Gemini classification complete: {}/{} mid-level, {} failed",
-                classified.size(),
-                jobs.size(),
-                failed.size());
-
-        // Shadow: run 4-way level classification on the same jobs
-        Map<JobPosting, String> levelMap = classifyLevel(jobs);
-
-        return new ClassificationResult(classified, failed, levelMap);
-    }
-
-    /**
-     * Shadow 4-way level classification via a separate Gemini call.
-     *
-     * <p>Runs independently of the primary Y/N classification. Failures are logged but do not
-     * affect the primary flow — levelMap will be empty on failure.
-     */
-    private Map<JobPosting, String> classifyLevel(List<JobPosting> jobs) {
-        if (!geminiClient.isConfigured()) {
-            return Collections.emptyMap();
-        }
-        Map<JobPosting, String> levelMap = new HashMap<>();
-        int totalBatches = (int) Math.ceil((double) jobs.size() / BATCH_SIZE);
-        log.info(
-                "Shadow level classification: {} job(s) in {} batch(es)",
-                jobs.size(),
-                totalBatches);
-
-        for (int i = 0; i < jobs.size(); i += BATCH_SIZE) {
-            int batchNum = (i / BATCH_SIZE) + 1;
-            List<JobPosting> batch = jobs.subList(i, Math.min(i + BATCH_SIZE, jobs.size()));
-            try {
-                Map<JobPosting, String> result =
-                        retryTemplate.execute(
-                                context -> {
-                                    if (context.getRetryCount() > 0) {
-                                        log.warn(
-                                                "Shadow level retry attempt {} for batch of {}",
-                                                context.getRetryCount(),
-                                                batch.size());
-                                    }
-                                    return geminiClient.classifyLevel(batch);
-                                });
-                if (result != null) {
-                    levelMap.putAll(result);
-                    log.info(
-                            "Shadow level batch {}/{}: classified {}",
-                            batchNum,
-                            totalBatches,
-                            result.size());
-                } else {
-                    log.warn("Shadow level batch {}/{} returned null", batchNum, totalBatches);
-                }
-            } catch (Exception e) {
+            Map<JobPosting, String> batchResult = classifyBatchWithRetry(batch);
+            if (batchResult == null) {
+                failed.addAll(batch);
+                metrics.recordGeminiFail();
                 log.warn(
-                        "Shadow level batch {}/{} failed after retries: {}",
+                        "Gemini batch {}/{} failed — {} job(s) will retry next poll",
                         batchNum,
                         totalBatches,
-                        e.getMessage());
+                        batch.size());
+            } else {
+                levelMap.putAll(batchResult);
+                metrics.recordGeminiSuccess();
+                long midLevelCount =
+                        batchResult.values().stream()
+                                .filter(l -> "L4".equals(l) || "L3_OR_L4".equals(l))
+                                .count();
+                metrics.recordJobsClassified((int) midLevelCount);
+                log.info(
+                        "Gemini batch {}/{}: {} L4, {} L3, {} other (of {})",
+                        batchNum,
+                        totalBatches,
+                        batchResult.values().stream().filter("L4"::equals).count(),
+                        batchResult.values().stream().filter("L3"::equals).count(),
+                        batchResult.values().stream().filter("OTHER"::equals).count(),
+                        batch.size());
             }
         }
-        return levelMap;
-    }
 
-    /** Classifies a single batch and appends results to classified/failed lists. */
-    private void processBatch(
-            List<JobPosting> batch,
-            int batchNum,
-            int totalBatches,
-            List<JobPosting> classified,
-            List<JobPosting> failed) {
-        List<JobPosting> result = classifyBatchWithRetry(batch);
-        if (result == null) {
-            failed.addAll(batch);
-            metrics.recordGeminiFail();
-            log.warn(
-                    "Gemini batch {}/{} failed — {} job(s) will retry next poll",
-                    batchNum,
-                    totalBatches,
-                    batch.size());
-        } else {
-            classified.addAll(result);
-            metrics.recordGeminiSuccess();
-            metrics.recordJobsClassified(result.size());
-            log.info(
-                    "Gemini batch {}/{}: {}/{} mid-level (running total: {})",
-                    batchNum,
-                    totalBatches,
-                    result.size(),
-                    batch.size(),
-                    classified.size());
-        }
+        log.info(
+                "Gemini classification complete: {} classified ({} L4, {} L3, {} L3_OR_L4,"
+                        + " {} OTHER), {} failed",
+                levelMap.size(),
+                levelMap.values().stream().filter("L4"::equals).count(),
+                levelMap.values().stream().filter("L3"::equals).count(),
+                levelMap.values().stream().filter("L3_OR_L4"::equals).count(),
+                levelMap.values().stream().filter("OTHER"::equals).count(),
+                failed.size());
+
+        return new ClassificationResult(levelMap, failed);
     }
 
     /**
-     * Sends a single batch to Gemini with retry support.
+     * Sends a single batch to Gemini for 4-way level classification with retry support.
      *
-     * @return list of approved jobs, empty list if none matched, or {@code null} if the API call
-     *     failed after all retries (signals the caller to skip persistence for this batch).
+     * @return map of job to level string, or {@code null} if the API call failed after all retries.
      */
-    private List<JobPosting> classifyBatchWithRetry(List<JobPosting> batch) {
+    private Map<JobPosting, String> classifyBatchWithRetry(List<JobPosting> batch) {
         log.info("Classifying batch of {} job(s) via Gemini", batch.size());
         try {
             return retryTemplate.execute(
@@ -188,7 +132,7 @@ public class JobClassifier {
                                     context.getRetryCount(),
                                     batch.size());
                         }
-                        return geminiClient.classify(batch);
+                        return geminiClient.classifyLevel(batch);
                     });
         } catch (Exception e) {
             log.error(

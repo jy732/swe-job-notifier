@@ -1,8 +1,6 @@
 package com.github.jingyangyu.swejobnotifier.service.classification;
 
 import com.github.jingyangyu.swejobnotifier.model.JobPosting;
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -23,9 +21,9 @@ import org.springframework.web.reactive.function.client.WebClient;
  * <p>Handles prompt construction, HTTP communication, and response parsing. Does NOT handle
  * batching, rate limiting, or retry — that orchestration lives in {@link JobClassifier}.
  *
- * <p>The system prompt instructs Gemini to respond in a strict {@code "1:Y\n2:N\n3:Y"} format.
- * Description snippets are truncated to 500 chars to stay within free-tier token limits — a
- * trade-off where some YOE requirements may be cut off, but keeps API costs at $0.
+ * <p>Uses a single 4-way level classification (L3/L4/L3_OR_L4/OTHER) per batch. The system prompt
+ * instructs Gemini to respond in a strict {@code "1:L4\n2:L3\n3:OTHER"} format. Signal snippets are
+ * extracted from both title and description to maximize coverage.
  */
 @Slf4j
 @Component
@@ -47,16 +45,6 @@ public class GeminiClient {
 
     /** Pattern to strip HTML tags from description snippets. */
     private static final Pattern HTML_TAG_PATTERN = Pattern.compile("<[^>]+>");
-
-    private static final String SYSTEM_PROMPT =
-            "Classify each job as Y (mid-level SWE) or N based on the title and signals "
-                    + "extracted from the job description. "
-                    + "Mid-level = 2-5 years experience, equivalent to SWE II / L4 / E4 / IC3. "
-                    + "Include: Backend/Frontend/Full Stack/Platform/Infrastructure/Mobile engineer"
-                    + " at mid-level, titles without level qualifier if signals suggest 2-5 YOE. "
-                    + "Exclude: Senior/Staff/Principal, Junior/Intern/New Grad, 6+ YOE, 0-1 YOE,"
-                    + " managers, non-engineering roles. "
-                    + "Response format: 1:Y\\n2:N\\n3:Y";
 
     private final WebClient webClient;
     private final String apiKey;
@@ -95,24 +83,21 @@ public class GeminiClient {
     }
 
     /**
-     * Sends a batch of jobs to Gemini for classification and parses the response.
-     *
-     * @return list of jobs classified as mid-level (Y), empty list if none matched, or {@code null}
-     *     if the API call failed (signals caller to retry).
+     * Builds the numbered user prompt with title + extracted signal snippets from the title and JD.
+     * Signals are extracted from both the title and description to maximize coverage — many
+     * scrapers don't capture descriptions, but titles like "New College Grad" still contain useful
+     * keywords.
      */
-    @SuppressWarnings("unchecked")
-    public List<JobPosting> classify(List<JobPosting> batch) {
-        Map<String, Object> response = callApi(buildPrompt(batch));
-        return parseResponse(response, batch);
-    }
-
-    /** Builds the numbered user prompt with title + extracted signal snippets from the JD. */
     String buildPrompt(List<JobPosting> batch) {
         StringBuilder sb = new StringBuilder("Classify these job postings:\n\n");
         int withSignals = 0;
         for (int i = 0; i < batch.size(); i++) {
             JobPosting job = batch.get(i);
-            String signals = extractSignals(job.getDescription());
+            String combined =
+                    (job.getTitle() != null ? job.getTitle() : "")
+                            + "\n"
+                            + (job.getDescription() != null ? job.getDescription() : "");
+            String signals = extractSignals(combined);
             if (!"(none)".equals(signals)) {
                 withSignals++;
             }
@@ -162,10 +147,10 @@ public class GeminiClient {
     }
 
     /**
-     * Sends a batch of jobs to Gemini for 4-way level classification (shadow flow).
+     * Sends a batch of jobs to Gemini for 4-way level classification.
      *
-     * @return map of job to level string (L3/L4/L3_OR_L4/OTHER), or {@code null} if API call
-     *     failed.
+     * @return map of job to level string (L3/L4/L3_OR_L4/OTHER), or {@code null} if API call failed
+     *     (signals caller to retry).
      */
     @SuppressWarnings("unchecked")
     public Map<JobPosting, String> classifyLevel(List<JobPosting> batch) {
@@ -213,10 +198,6 @@ public class GeminiClient {
         }
     }
 
-    private Map<String, Object> callApi(String userPrompt) {
-        return callApi(userPrompt, SYSTEM_PROMPT);
-    }
-
     private Map<String, Object> callApi(String userPrompt, String systemPrompt) {
         Map<String, Object> requestBody =
                 Map.of(
@@ -243,54 +224,5 @@ public class GeminiClient {
                 .retrieve()
                 .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {})
                 .block();
-    }
-
-    /**
-     * Parses Gemini's response text into a list of approved jobs.
-     *
-     * <p>Expected format (one per line): {@code "1:Y\n2:N\n3:Y"} where the number is the 1-indexed
-     * position in the batch. Malformed lines are silently skipped — partial results are better than
-     * failing the entire batch.
-     */
-    @SuppressWarnings("unchecked")
-    List<JobPosting> parseResponse(Map<String, Object> response, List<JobPosting> batch) {
-        if (response == null) {
-            return Collections.emptyList();
-        }
-
-        try {
-            List<Map<String, Object>> candidates =
-                    (List<Map<String, Object>>) response.get("candidates");
-            if (candidates == null || candidates.isEmpty()) {
-                return Collections.emptyList();
-            }
-
-            Map<String, Object> content = (Map<String, Object>) candidates.get(0).get("content");
-            List<Map<String, Object>> parts = (List<Map<String, Object>>) content.get("parts");
-            String text = parts.get(0).get("text").toString().trim();
-
-            log.debug("Gemini raw response: {}", text);
-
-            // Parse "1:Y\n2:N\n3:Y" format — convert 1-indexed response to 0-indexed batch
-            List<JobPosting> result = new ArrayList<>();
-            for (String line : text.split("\n")) {
-                line = line.trim();
-                if (line.isEmpty()) continue;
-                String[] tokens = line.split(":");
-                if (tokens.length == 2) {
-                    int index = Integer.parseInt(tokens[0].trim()) - 1;
-                    String classification = tokens[1].trim().toUpperCase();
-                    if ("Y".equals(classification) && index >= 0 && index < batch.size()) {
-                        result.add(batch.get(index));
-                    }
-                }
-            }
-            log.info(
-                    "Gemini classified {}/{} job(s) as mid-level SWE", result.size(), batch.size());
-            return result;
-        } catch (Exception e) {
-            log.warn("Failed to parse Gemini response", e);
-            return Collections.emptyList();
-        }
     }
 }

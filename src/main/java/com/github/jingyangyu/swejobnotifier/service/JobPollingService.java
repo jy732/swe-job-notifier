@@ -242,55 +242,64 @@ public class JobPollingService {
     // ── Classification + persistence ───────────────────────────────────────
 
     /**
-     * Classifies unseen jobs as mid-level (L4) and persists all to the DB. Jobs with obvious
-     * mid-level titles are auto-approved; the rest go to Gemini. A shadow 4-way level
-     * classification (L3/L4/L3_OR_L4/OTHER) runs in parallel for comparison without affecting the
-     * primary midLevel flag.
+     * Classifies unseen jobs by level (L3/L4/L3_OR_L4/OTHER) and persists all to the DB. Jobs with
+     * obvious level indicators in the title are auto-classified locally; the rest go to Gemini for
+     * 4-way classification. {@code midLevel} is derived from the level: L4 or L3_OR_L4 → true.
      */
     private CompanyResult classifyAndPersist(
             JobScraper scraper, String company, int scrapedCount, List<JobPosting> unseen) {
-        List<JobPosting> autoApproved = new ArrayList<>();
         List<JobPosting> needsGemini = new ArrayList<>();
-        // Shadow: track auto-classified levels for jobs that skip Gemini
         Map<JobPosting, String> autoLevelMap = new HashMap<>();
+        int autoApprovedCount = 0;
         for (JobPosting job : unseen) {
-            if (titleFilter.isObviousMidLevel(job)) {
-                autoApproved.add(job);
-                autoLevelMap.put(job, "L4");
-            } else {
-                String autoLevel = titleFilter.autoClassifyLevel(job);
-                if (autoLevel != null) {
-                    autoLevelMap.put(job, autoLevel);
+            String autoLevel = titleFilter.autoClassifyLevel(job);
+            if (autoLevel != null) {
+                autoLevelMap.put(job, autoLevel);
+                if ("L4".equals(autoLevel)) {
+                    autoApprovedCount++;
                 }
+            } else if (titleFilter.isObviousMidLevel(job)) {
+                autoLevelMap.put(job, "L4");
+                autoApprovedCount++;
+            } else {
                 needsGemini.add(job);
             }
         }
         log.info(
-                "[{}] {} — {} unseen: {} auto-approved, {} need Gemini",
+                "[{}] {} — {} unseen: {} auto-classified, {} need Gemini",
                 scraper.platform(),
                 company,
                 unseen.size(),
-                autoApproved.size(),
+                autoLevelMap.size(),
                 needsGemini.size());
 
-        List<JobPosting> geminiApproved = List.of();
         List<JobPosting> geminiFailed = List.of();
         Map<JobPosting, String> geminiLevelMap = Collections.emptyMap();
         if (!needsGemini.isEmpty()) {
             ClassificationResult result = classifier.classify(needsGemini);
-            geminiApproved = result.getApproved();
             geminiFailed = result.getFailed();
             geminiLevelMap = result.getLevelMap();
         }
 
-        // Merge level maps: auto-classified + Gemini shadow
+        // Merge level maps: auto-classified + Gemini
         Map<JobPosting, String> levelMap = new HashMap<>(autoLevelMap);
         levelMap.putAll(geminiLevelMap);
 
-        List<JobPosting> allApproved = new ArrayList<>(autoApproved);
-        allApproved.addAll(geminiApproved);
+        int persisted = persistJobs(unseen, geminiFailed, levelMap);
 
-        int persisted = persistJobs(unseen, allApproved, geminiFailed, levelMap);
+        // Count mid-level (L4 + L3_OR_L4)
+        long midLevelCount =
+                levelMap.values().stream()
+                        .filter(l -> "L4".equals(l) || "L3_OR_L4".equals(l))
+                        .count();
+        List<JobPosting> allApproved =
+                unseen.stream()
+                        .filter(
+                                j -> {
+                                    String level = levelMap.get(j);
+                                    return "L4".equals(level) || "L3_OR_L4".equals(level);
+                                })
+                        .toList();
 
         log.info(
                 "[{}] {} — persisted {}, {} failed: {} mid-level ({} auto + {} Gemini)",
@@ -298,29 +307,25 @@ public class JobPollingService {
                 company,
                 persisted,
                 geminiFailed.size(),
-                allApproved.size(),
-                autoApproved.size(),
-                geminiApproved.size());
+                midLevelCount,
+                autoApprovedCount,
+                midLevelCount - autoApprovedCount);
 
         return new CompanyResult(
-                allApproved, scrapedCount, unseen.size(), autoApproved.size(), needsGemini.size());
+                allApproved, scrapedCount, unseen.size(), autoApprovedCount, needsGemini.size());
     }
 
     /**
      * Persists a batch of jobs, merging with any existing rows (upsert-safe). Batch-loads existing
-     * rows in a single query to avoid N+1. Sets {@code midLevel}, {@code classificationFailures},
-     * and shadow {@code level} on each job. Logs SHADOW DISAGREE warnings when the old Y/N
-     * classification diverges from the new 4-way level.
+     * rows in a single query to avoid N+1. Sets {@code level}, derives {@code midLevel} from the
+     * level (L4 or L3_OR_L4 → true), and tracks {@code classificationFailures}.
      *
      * @return the number of jobs persisted
      */
     private int persistJobs(
             List<JobPosting> toProcess,
-            List<JobPosting> approved,
             List<JobPosting> geminiFailed,
             Map<JobPosting, String> levelMap) {
-        Set<String> approvedIds =
-                approved.stream().map(JobPosting::getExternalId).collect(Collectors.toSet());
         Set<String> failedIds =
                 geminiFailed.stream().map(JobPosting::getExternalId).collect(Collectors.toSet());
         Instant now = Instant.now();
@@ -341,7 +346,6 @@ public class JobPollingService {
                 continue; // skip intra-batch duplicates
             }
             // Merge with any existing row to avoid unique-constraint violations
-            // (the in-memory dedup set is a snapshot — duplicates can slip through)
             JobPosting target = existingMap.getOrDefault(key, job);
             if (target.getDetectedAt() == null) {
                 target.setDetectedAt(now);
@@ -350,29 +354,12 @@ public class JobPollingService {
                 target.setClassificationFailures(target.getClassificationFailures() + 1);
                 target.setMidLevel(false);
             } else {
-                target.setMidLevel(approvedIds.contains(job.getExternalId()));
-                target.setClassificationFailures(0);
-            }
-
-            // Shadow: set level from 4-way classification
-            String level = levelMap.get(job);
-            if (level != null) {
-                target.setLevel(level);
-                // Log disagreement between old midLevel and new level
-                boolean midLevel = target.isMidLevel();
-                boolean levelSaysL4 = "L4".equals(level) || "L3_OR_L4".equals(level);
-                if (midLevel && !levelSaysL4) {
-                    log.warn(
-                            "SHADOW DISAGREE: midLevel=true but level={} — [{}] {}",
-                            level,
-                            target.getCompany(),
-                            target.getTitle());
-                } else if (!midLevel && "L4".equals(level)) {
-                    log.warn(
-                            "SHADOW DISAGREE: midLevel=false but level=L4 — [{}] {}",
-                            target.getCompany(),
-                            target.getTitle());
+                String level = levelMap.get(job);
+                if (level != null) {
+                    target.setLevel(level);
+                    target.setMidLevel("L4".equals(level) || "L3_OR_L4".equals(level));
                 }
+                target.setClassificationFailures(0);
             }
 
             toPersistMap.put(key, target);
@@ -386,8 +373,8 @@ public class JobPollingService {
 
     /**
      * Retries Gemini classification for jobs that failed in previous polls. Jobs that have
-     * exhausted {@link #MAX_CLASSIFICATION_FAILURES} attempts are auto-approved as a safety net
-     * (better to over-notify than silently drop a job).
+     * exhausted {@link #MAX_CLASSIFICATION_FAILURES} attempts are auto-approved as L4 (better to
+     * over-notify than silently drop a job).
      */
     private void retryFailedClassifications(List<JobPosting> allNewJobs) {
         List<JobPosting> retryJobs =
@@ -400,10 +387,11 @@ public class JobPollingService {
         for (JobPosting job : exhaustedJobs) {
             metrics.recordAutoApprovedFallback();
             log.warn(
-                    "Auto-approving after {} Gemini failures: [{}] {}",
+                    "Auto-approving as L4 after {} Gemini failures: [{}] {}",
                     job.getClassificationFailures(),
                     job.getCompany(),
                     job.getTitle());
+            job.setLevel("L4");
             job.setMidLevel(true);
             job.setClassificationFailures(0);
             repository.save(job);
@@ -415,11 +403,16 @@ public class JobPollingService {
         log.info("=== RETRY === {} job(s) pending Gemini re-classification", retryJobs.size());
         ClassificationResult result = classifier.classify(retryJobs);
 
-        for (JobPosting job : result.getApproved()) {
-            job.setMidLevel(true);
+        for (Map.Entry<JobPosting, String> entry : result.getLevelMap().entrySet()) {
+            JobPosting job = entry.getKey();
+            String level = entry.getValue();
+            job.setLevel(level);
+            job.setMidLevel("L4".equals(level) || "L3_OR_L4".equals(level));
             job.setClassificationFailures(0);
             repository.save(job);
-            allNewJobs.add(job);
+            if (job.isMidLevel()) {
+                allNewJobs.add(job);
+            }
         }
         for (JobPosting job : result.getFailed()) {
             job.setClassificationFailures(job.getClassificationFailures() + 1);
@@ -427,11 +420,10 @@ public class JobPollingService {
         }
 
         log.info(
-                "=== RETRY COMPLETE === {}/{} approved, {} failed (attempt {}+)",
-                result.getApproved().size(),
+                "=== RETRY COMPLETE === {}/{} classified, {} failed",
+                result.getLevelMap().size(),
                 retryJobs.size(),
-                result.getFailed().size(),
-                retryJobs.isEmpty() ? 0 : retryJobs.get(0).getClassificationFailures());
+                result.getFailed().size());
     }
 
     // ── Result record ──────────────────────────────────────────────────────

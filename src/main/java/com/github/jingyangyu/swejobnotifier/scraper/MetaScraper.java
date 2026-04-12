@@ -55,6 +55,15 @@ public class MetaScraper implements JobScraper {
         return List.of("meta");
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Two-step process: (1) GET the job-search page to extract the LSD (CSRF) token via regex,
+     * then (2) POST a GraphQL query to {@code /graphql} with {@code doc_id} and search variables.
+     * Returns all matching jobs in one request — no pagination. Requires a browser-like {@code
+     * User-Agent} and CORS headers ({@code Origin}, {@code Sec-Fetch-*}). If the LSD token
+     * extraction fails or the response is non-JSON, returns an empty list.
+     */
     @Override
     public List<JobPosting> scrape(String company) {
         List<JobPosting> allJobs = new ArrayList<>();

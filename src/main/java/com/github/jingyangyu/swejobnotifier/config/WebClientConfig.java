@@ -21,6 +21,10 @@ public class WebClientConfig {
     private static final int READ_TIMEOUT_S = 30;
     private static final int RESPONSE_TIMEOUT_S = 30;
 
+    /**
+     * Configures a shared {@link WebClient.Builder} with 10s connect timeout, 30s read/response
+     * timeout, and 32 MB buffer for large Workday/Amazon API responses.
+     */
     @Bean
     public WebClient.Builder webClientBuilder() {
         HttpClient httpClient =

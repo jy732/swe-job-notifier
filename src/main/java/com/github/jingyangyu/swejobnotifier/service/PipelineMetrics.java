@@ -93,58 +93,72 @@ public class PipelineMetrics {
         registry.gauge("job.unnotified", unnotifiedGauge);
     }
 
+    /** Increments {@code job.gemini.calls{result=success}}. */
     public void recordGeminiSuccess() {
         geminiSuccess.increment();
     }
 
+    /** Increments {@code job.gemini.calls{result=failure}}. */
     public void recordGeminiFail() {
         geminiFail.increment();
     }
 
+    /** Increments {@code job.gemini.retries}. */
     public void recordGeminiRetry() {
         geminiRetry.increment();
     }
 
+    /** Increments {@code job.scrape{result=success}}. */
     public void recordScrapeSuccess() {
         scrapeSuccess.increment();
     }
 
+    /** Increments {@code job.scrape{result=failure}}. */
     public void recordScrapeFail() {
         scrapeFail.increment();
     }
 
+    /** Increments {@code job.email{result=success}}. */
     public void recordEmailSuccess() {
         emailSuccess.increment();
     }
 
+    /** Increments {@code job.email{result=failure}}. */
     public void recordEmailFail() {
         emailFail.increment();
     }
 
+    /** Adds {@code count} to {@code job.pipeline.scraped}. */
     public void recordJobsScraped(int count) {
         jobsScraped.increment(count);
     }
 
+    /** Adds {@code count} to {@code job.pipeline.classified}. */
     public void recordJobsClassified(int count) {
         jobsClassified.increment(count);
     }
 
+    /** Adds {@code count} to {@code job.pipeline.auto_approved}. */
     public void recordJobsAutoApproved(int count) {
         jobsAutoApproved.increment(count);
     }
 
+    /** Increments {@code job.pipeline.auto_approved_fallback}. */
     public void recordAutoApprovedFallback() {
         jobsAutoApprovedFallback.increment();
     }
 
+    /** Sets the {@code job.unnotified} gauge to the current count. */
     public void setUnnotifiedCount(int count) {
         unnotifiedGauge.set(count);
     }
 
+    /** Starts a timer sample for measuring poll cycle duration. */
     public Timer.Sample startPollTimer() {
         return Timer.start();
     }
 
+    /** Stops the timer sample and records the duration to {@code job.poll.duration}. */
     public void stopPollTimer(Timer.Sample sample) {
         sample.stop(pollCycleTimer);
     }

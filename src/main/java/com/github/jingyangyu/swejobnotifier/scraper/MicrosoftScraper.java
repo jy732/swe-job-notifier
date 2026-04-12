@@ -49,6 +49,14 @@ public class MicrosoftScraper implements JobScraper {
         return List.of("microsoft");
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Paginates through Microsoft's PCSX search API ({@code /api/pcsx/search}) in batches of
+     * {@value #PAGE_SIZE}, capped at {@value #MAX_RESULTS} total results. Searches for "software
+     * engineer" filtered to United States. Stops early if a page returns fewer than {@value
+     * #PAGE_SIZE} positions. On failure, returns whatever was collected so far.
+     */
     @Override
     public List<JobPosting> scrape(String company) {
         List<JobPosting> allJobs = new ArrayList<>();

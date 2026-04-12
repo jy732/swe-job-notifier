@@ -52,6 +52,15 @@ public class AppleScraper implements JobScraper {
         return List.of("apple");
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Renders Apple's career SPA ({@code jobs.apple.com/en-us/search}) via Playwright and
+     * extracts job data from the embedded {@code window.__staticRouterHydrationData} JSON rather
+     * than querying DOM elements. This makes the scraper resilient to CSS class changes. Paginates
+     * up to {@value #MAX_PAGES} pages, sorted by newest. Posted dates are parsed from "MMM dd,
+     * yyyy" format.
+     */
     @Override
     public List<JobPosting> scrape(String company) {
         List<JobPosting> allJobs = new ArrayList<>();

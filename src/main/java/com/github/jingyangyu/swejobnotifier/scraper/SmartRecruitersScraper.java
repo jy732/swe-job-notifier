@@ -43,6 +43,14 @@ public class SmartRecruitersScraper implements JobScraper {
         return companies;
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Paginates through the SmartRecruiters Postings API in batches of {@value #PAGE_SIZE}. Uses
+     * offset-based pagination, stopping when {@code offset >= totalFound} or an empty page is
+     * returned. Location is assembled from city/region/country fields. On failure mid-pagination,
+     * returns partial results rather than nothing.
+     */
     @Override
     @SuppressWarnings("unchecked")
     public List<JobPosting> scrape(String company) {

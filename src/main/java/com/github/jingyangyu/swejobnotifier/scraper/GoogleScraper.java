@@ -45,6 +45,15 @@ public class GoogleScraper implements JobScraper {
         return List.of("google");
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Renders Google Careers SPA ({@code google.com/about/careers/applications/jobs/results})
+     * via Playwright and paginates up to {@value #MAX_PAGES} pages. Uses structural selectors
+     * (links to job detail pages with numeric IDs) rather than class-name-dependent selectors for
+     * resilience. Pre-filters to {@code target_level=MID} and {@code location=United+States} in the
+     * URL.
+     */
     @Override
     public List<JobPosting> scrape(String company) {
         List<JobPosting> allJobs = new ArrayList<>();

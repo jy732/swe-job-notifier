@@ -46,6 +46,14 @@ public class TeslaScraper implements JobScraper {
         return List.of("tesla");
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Renders Tesla's career page ({@code tesla.com/careers/search}) via Playwright with a
+     * custom user agent and 1920x1080 viewport to avoid bot detection. Tesla uses Akamai WAF that
+     * frequently blocks headless browsers — when blocked, this scraper gracefully returns 0 results
+     * instead of throwing. Extracts job data from JavaScript-rendered DOM elements.
+     */
     @Override
     public List<JobPosting> scrape(String company) {
         List<JobPosting> allJobs = new ArrayList<>();

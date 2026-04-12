@@ -44,6 +44,14 @@ public class TikTokScraper implements JobScraper {
         return List.of("tiktok");
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Renders TikTok's Next.js career SPA ({@code lifeattiktok.com/search}) via Playwright with
+     * a custom user agent and 1920x1080 viewport. TikTok's API requires browser-level request
+     * headers that can't be replicated with plain HTTP, so we render the full page and extract job
+     * data from the DOM. Searches for "software engineer" keyword.
+     */
     @Override
     public List<JobPosting> scrape(String company) {
         List<JobPosting> allJobs = new ArrayList<>();

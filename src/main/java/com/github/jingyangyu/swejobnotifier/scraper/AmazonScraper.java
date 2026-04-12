@@ -51,6 +51,14 @@ public class AmazonScraper implements JobScraper {
         return List.of("amazon");
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Paginates through Amazon's JSON search API ({@code /en/search.json}) in batches of {@value
+     * #PAGE_SIZE}, filtered to the "software-development" category and US locations. Stops when
+     * {@code offset >= totalHits} or an empty page is returned. Uses {@code id_icims} as external
+     * ID (falling back to {@code id}). On failure mid-pagination, returns partial results.
+     */
     @Override
     @SuppressWarnings("unchecked")
     public List<JobPosting> scrape(String company) {

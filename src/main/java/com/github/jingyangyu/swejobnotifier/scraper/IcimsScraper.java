@@ -48,6 +48,15 @@ public class IcimsScraper implements JobScraper {
         return properties.getCompanies().stream().map(IcimsCompany::getName).toList();
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Renders the iCIMS career portal via Playwright with a custom user agent. Modern iCIMS
+     * portals are React SPAs that require JavaScript rendering to display job listings. Per-company
+     * config provides the portal subdomain (or custom domain) for URL construction. Paginates
+     * through search results by interacting with the rendered DOM. Returns an empty list if no
+     * config is found for the given company.
+     */
     @Override
     public List<JobPosting> scrape(String company) {
         Optional<IcimsCompany> configOpt = properties.findByName(company);

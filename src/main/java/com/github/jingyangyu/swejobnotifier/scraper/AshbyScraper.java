@@ -41,6 +41,14 @@ public class AshbyScraper implements JobScraper {
         return companies;
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Fetches all jobs from the Ashby Posting API ({@code /posting-api/job-board/{token}}) in a
+     * single request. No pagination — Ashby returns the full job board. Secondary locations are
+     * concatenated with semicolons. Prefers {@code descriptionPlain} over {@code descriptionHtml}
+     * (HTML is stripped as fallback). On failure, returns an empty list.
+     */
     @Override
     @SuppressWarnings("unchecked")
     public List<JobPosting> scrape(String company) {

@@ -58,6 +58,11 @@ public class JobPollingService {
         this.metrics = metrics;
     }
 
+    /**
+     * Main poll loop. Loads known job keys once, then iterates all scrapers in parallel, collecting
+     * new mid-level postings. Retries any jobs that failed Gemini classification in a previous
+     * cycle. Runs on the configured cron schedule (default: every 15 minutes).
+     */
     @Scheduled(cron = "${job.poll.cron}")
     public void poll() {
         log.info("=== POLL CYCLE START ===");
@@ -134,6 +139,10 @@ public class JobPollingService {
         return results;
     }
 
+    /**
+     * Wraps {@link #processCompany} in a try/catch so a single company failure doesn't kill the
+     * pool thread.
+     */
     private CompanyResult safeProcessCompany(
             JobScraper scraper, String company, Set<String> knownKeys) {
         try {
@@ -144,6 +153,11 @@ public class JobPollingService {
         }
     }
 
+    /**
+     * Waits up to {@link #COMPANY_TIMEOUT} for a company scrape to finish. On timeout, cancels
+     * without interrupting ({@code cancel(false)}) so in-progress DB writes are not corrupted. The
+     * timed-out thread finishes in the background; its result is discarded.
+     */
     private CompanyResult awaitResult(Future<CompanyResult> future, JobScraper scraper, String co) {
         try {
             return future.get(COMPANY_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
@@ -165,6 +179,10 @@ public class JobPollingService {
 
     // ── Per-company pipeline ───────────────────────────────────────────────
 
+    /**
+     * Full per-company pipeline: scrape → pre-filter → dedup → classify → persist. Returns the
+     * approved jobs and pipeline stats for aggregation in {@link #poll()}.
+     */
     private CompanyResult processCompany(
             JobScraper scraper, String company, Set<String> knownKeys) {
         List<JobPosting> scraped = scraper.scrape(company);
@@ -179,6 +197,10 @@ public class JobPollingService {
         return classifyAndPersist(scraper, company, scraped.size(), unseen);
     }
 
+    /**
+     * Applies the filter funnel: freshness → exclude keywords → US location → SWE relevance. Logs
+     * the count at each stage for pipeline observability.
+     */
     private List<JobPosting> applyPreFilters(
             JobScraper scraper, String company, List<JobPosting> scraped) {
         List<JobPosting> fresh = scraped.stream().filter(titleFilter::isFresh).toList();
@@ -202,6 +224,10 @@ public class JobPollingService {
         return sweRelevant;
     }
 
+    /**
+     * Removes jobs already in the DB (via {@code knownKeys} snapshot) and intra-batch duplicates
+     * (via a local {@code seen} set). Both checks use the compound key {@code company:externalId}.
+     */
     private List<JobPosting> dedup(List<JobPosting> jobs, Set<String> knownKeys) {
         Set<String> seen = new HashSet<>();
         return jobs.stream()
@@ -215,6 +241,12 @@ public class JobPollingService {
 
     // ── Classification + persistence ───────────────────────────────────────
 
+    /**
+     * Classifies unseen jobs as mid-level (L4) and persists all to the DB. Jobs with obvious
+     * mid-level titles are auto-approved; the rest go to Gemini. A shadow 4-way level
+     * classification (L3/L4/L3_OR_L4/OTHER) runs in parallel for comparison without affecting the
+     * primary midLevel flag.
+     */
     private CompanyResult classifyAndPersist(
             JobScraper scraper, String company, int scrapedCount, List<JobPosting> unseen) {
         List<JobPosting> autoApproved = new ArrayList<>();
@@ -274,6 +306,14 @@ public class JobPollingService {
                 allApproved, scrapedCount, unseen.size(), autoApproved.size(), needsGemini.size());
     }
 
+    /**
+     * Persists a batch of jobs, merging with any existing rows (upsert-safe). Batch-loads existing
+     * rows in a single query to avoid N+1. Sets {@code midLevel}, {@code classificationFailures},
+     * and shadow {@code level} on each job. Logs SHADOW DISAGREE warnings when the old Y/N
+     * classification diverges from the new 4-way level.
+     *
+     * @return the number of jobs persisted
+     */
     private int persistJobs(
             List<JobPosting> toProcess,
             List<JobPosting> approved,
@@ -344,6 +384,11 @@ public class JobPollingService {
 
     // ── Gemini retry ───────────────────────────────────────────────────────
 
+    /**
+     * Retries Gemini classification for jobs that failed in previous polls. Jobs that have
+     * exhausted {@link #MAX_CLASSIFICATION_FAILURES} attempts are auto-approved as a safety net
+     * (better to over-notify than silently drop a job).
+     */
     private void retryFailedClassifications(List<JobPosting> allNewJobs) {
         List<JobPosting> retryJobs =
                 repository.findByClassificationFailuresGreaterThanAndClassificationFailuresLessThan(
@@ -391,6 +436,7 @@ public class JobPollingService {
 
     // ── Result record ──────────────────────────────────────────────────────
 
+    /** Per-company pipeline result, aggregated in {@link #poll()} for cycle-level stats. */
     private record CompanyResult(
             List<JobPosting> approved,
             int scraped,

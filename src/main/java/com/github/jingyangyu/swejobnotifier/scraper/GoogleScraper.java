@@ -128,7 +128,6 @@ public class GoogleScraper implements JobScraper {
                 }
 
                 for (Map<String, String> job : jobs) {
-                    String description = fetchJobDescription(page, job.getOrDefault("url", ""));
                     allJobs.add(
                             JobPosting.builder()
                                     .company("google")
@@ -136,7 +135,6 @@ public class GoogleScraper implements JobScraper {
                                     .title(job.getOrDefault("title", ""))
                                     .url(job.getOrDefault("url", ""))
                                     .location(job.getOrDefault("location", ""))
-                                    .description(description)
                                     .postedDate(null)
                                     .detectedAt(Instant.now())
                                     .build());
@@ -154,9 +152,28 @@ public class GoogleScraper implements JobScraper {
     }
 
     /**
+     * {@inheritDoc}
+     *
+     * <p>Opens a fresh Playwright browser context and navigates to each job's detail page to
+     * extract the description. Called post-dedup so only unseen jobs pay the navigation cost.
+     */
+    @Override
+    public void fetchDescriptions(List<JobPosting> jobs) {
+        if (jobs.isEmpty()) return;
+        log.info("Google: fetching descriptions for {} unseen job(s)", jobs.size());
+        try (BrowserContext ctx = browser.newContext()) {
+            Page page = ctx.newPage();
+            for (JobPosting job : jobs) {
+                job.setDescription(fetchJobDescription(page, job.getUrl()));
+            }
+        } catch (Exception e) {
+            log.error("Google: failed to fetch descriptions", e);
+        }
+    }
+
+    /**
      * Navigates to a Google Careers job detail page and extracts the description text. Returns
-     * empty string on any failure — a missing description is acceptable since the title and Gemini
-     * can still classify based on title alone.
+     * empty string on any failure.
      */
     private String fetchJobDescription(Page page, String jobUrl) {
         if (jobUrl == null || jobUrl.isBlank()) {

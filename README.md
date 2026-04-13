@@ -6,10 +6,11 @@ Automated job posting monitor that scrapes career pages, filters for mid-level a
 
 **Pipeline stages:**
 
-1. **Scrape** — Polls 120+ company career pages every 15 minutes using an 8-thread pool
+1. **Scrape** — Polls 120+ company career pages every 15 minutes using an 8-thread pool. Playwright scrapers collect metadata only (title, URL, location) — descriptions are deferred to post-dedup. API scrapers include descriptions for free in the response.
 2. **Pre-filter** — Removes stale postings, non-US locations, excluded titles (management, intern, staff+), and non-SWE roles
 3. **Dedup** — Loads all known job keys into an in-memory set once per poll cycle for O(1) lookups (no per-job DB queries)
-4. **Classify** — Three-stage `ClassificationPipeline` assigns a level (L3/L4/L3_OR_L4/OTHER) to each job. L4 and L3_OR_L4 are treated as mid-level for notifications.
+4. **Fetch descriptions** — Playwright scrapers (Google, Tesla, TikTok, iCIMS) open a fresh browser context and visit detail pages only for unseen jobs. This avoids fetching ~100 descriptions for already-seen jobs that would be discarded after dedup.
+5. **Classify** — Three-stage `ClassificationPipeline` assigns a level (L3/L4/L3_OR_L4/OTHER) to each job. L4 and L3_OR_L4 are treated as mid-level for notifications.
    - **Stage 1 — Title rules:** Regex patterns ("SWE II" → L4, "SDE 1" → L3) and L3 keywords ("new grad", "junior", "entry level"). Zero-cost, high-confidence.
    - **Stage 2 — Description signals:** `SignalExtractor` parses YOE patterns from JDs ("3+ years" → L4, "0-1 years" → L3) and checks for L3 keywords. Still local, no API call.
    - **Stage 3 — Gemini LLM:** Remaining ambiguous jobs are sent to Gemini 2.5 Flash in batches of 50 for 4-way classification. `SignalExtractor` provides structured `Signal` records with ~200-char context snippets from 12 consolidated keywords.
@@ -27,7 +28,8 @@ flowchart TD
     LOCATION --> SWE["Filter: SWE-relevant titles only"]
     SWE --> DEDUP{"Already\nin DB?"}
     DEDUP -- Yes --> SKIP([Skip])
-    DEDUP -- No --> STAGE1{"Stage 1:\nTitle rules"}
+    DEDUP -- No --> FETCHJD["Fetch descriptions\n(Playwright scrapers only,\nAPI scrapers already have JDs)"]
+    FETCHJD --> STAGE1{"Stage 1:\nTitle rules"}
     STAGE1 -- "L4/L3" --> LEVEL["Level assigned\n(L3/L4)"]
     STAGE1 -- Ambiguous --> STAGE2{"Stage 2:\nDescription signals\n(YOE, keywords)"}
     STAGE2 -- "L4/L3" --> LEVEL

@@ -182,8 +182,10 @@ public class JobPollingService {
     // ── Per-company pipeline ───────────────────────────────────────────────
 
     /**
-     * Full per-company pipeline: scrape → pre-filter → dedup → classify → persist. Returns the
-     * approved jobs and pipeline stats for aggregation in {@link #poll()}.
+     * Full per-company pipeline: scrape → pre-filter → dedup → fetch descriptions → classify →
+     * persist. Description fetching is deferred to post-dedup so only unseen jobs pay the cost of
+     * per-job detail page loads (Playwright scrapers). API-based scrapers already include
+     * descriptions in the scrape response, so their {@code fetchDescriptions} is a no-op.
      */
     private CompanyResult processCompany(
             JobScraper scraper, String company, Set<String> knownKeys) {
@@ -195,6 +197,9 @@ public class JobPollingService {
             log.info("[{}] {} — 0 unseen, skipping", scraper.platform(), company);
             return new CompanyResult(List.of(), scraped.size(), 0, 0, 0);
         }
+
+        // Fetch descriptions only for unseen jobs (post-dedup)
+        scraper.fetchDescriptions(unseen);
 
         return classifyAndPersist(scraper, company, scraped.size(), unseen);
     }

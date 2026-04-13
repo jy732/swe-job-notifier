@@ -60,9 +60,6 @@ final class FilterKeywords {
                             + ".*?(engineer|developer|eng).*?"
                             + "(\\bi\\b(?!i)|\\b1\\b|\\bl3\\b|\\be3\\b|\\bic2\\b)");
 
-    // Kept for backward compatibility — same regex as L4_PATTERN
-    static final Pattern MID_LEVEL_PATTERN = L4_PATTERN;
-
     // ── Tier 3: SWE-relevant titles must contain one ROLE + one TITLE keyword ──
     static final List<String> ROLE_KEYWORDS =
             List.of(

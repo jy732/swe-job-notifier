@@ -26,6 +26,9 @@ public class PipelineMetrics {
     private final Counter jobsClassified;
     private final Counter jobsAutoApproved;
     private final Counter jobsAutoApprovedFallback;
+    private final Counter classifyStage1;
+    private final Counter classifyStage2;
+    private final Counter classifyStage3;
     private final Timer pollCycleTimer;
     private final AtomicInteger unnotifiedGauge;
 
@@ -82,6 +85,22 @@ public class PipelineMetrics {
         jobsAutoApprovedFallback =
                 Counter.builder("job.pipeline.auto_approved_fallback")
                         .description("Jobs auto-approved after exhausting Gemini retries")
+                        .register(registry);
+
+        classifyStage1 =
+                Counter.builder("job.classify.stage")
+                        .tag("stage", "title_rules")
+                        .description("Jobs classified by Stage 1 (title regex/keywords)")
+                        .register(registry);
+        classifyStage2 =
+                Counter.builder("job.classify.stage")
+                        .tag("stage", "description_signals")
+                        .description("Jobs classified by Stage 2 (YOE patterns in JD)")
+                        .register(registry);
+        classifyStage3 =
+                Counter.builder("job.classify.stage")
+                        .tag("stage", "gemini")
+                        .description("Jobs sent to Stage 3 (Gemini LLM)")
                         .register(registry);
 
         pollCycleTimer =
@@ -146,6 +165,21 @@ public class PipelineMetrics {
     /** Increments {@code job.pipeline.auto_approved_fallback}. */
     public void recordAutoApprovedFallback() {
         jobsAutoApprovedFallback.increment();
+    }
+
+    /** Adds {@code count} to {@code job.classify.stage{stage=title_rules}}. */
+    public void recordClassifyStage1(int count) {
+        classifyStage1.increment(count);
+    }
+
+    /** Adds {@code count} to {@code job.classify.stage{stage=description_signals}}. */
+    public void recordClassifyStage2(int count) {
+        classifyStage2.increment(count);
+    }
+
+    /** Adds {@code count} to {@code job.classify.stage{stage=gemini}}. */
+    public void recordClassifyStage3(int count) {
+        classifyStage3.increment(count);
     }
 
     /** Sets the {@code job.unnotified} gauge to the current count. */

@@ -17,8 +17,7 @@ import org.springframework.stereotype.Service;
  * <p>This class handles the "how" of classification (batching, pacing, error handling) while {@link
  * GeminiClient} handles the "what" (API calls, prompt building, response parsing).
  *
- * <p>Uses a single 4-way level classification (L3/L4/L3_OR_L4/OTHER) per batch instead of separate
- * Y/N and level calls. The caller derives {@code midLevel} from the level.
+ * <p>Uses a single 4-way level classification (L3/L4/L3_OR_L4/OTHER) per batch.
  *
  * <p>Design decisions:
  *
@@ -49,8 +48,7 @@ public class JobClassifier {
     /**
      * Classifies a list of job postings via Gemini's 4-way level classification in batches.
      *
-     * <p>Returns a {@link ClassificationResult} containing the level map and failed jobs. The
-     * caller derives {@code midLevel} from the level (L4 or L3_OR_L4 → mid-level).
+     * <p>Returns a {@link ClassificationResult} containing the level map and failed jobs.
      *
      * <p>If no API key is configured, all jobs are mapped to "L4" — this is intentional so the app
      * can run in dev mode without Gemini, relying solely on local title filters.

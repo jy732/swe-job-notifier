@@ -16,7 +16,7 @@ import lombok.Getter;
  *       they remain "unseen" and retry on the next poll cycle.
  * </ul>
  *
- * <p>The caller derives {@code midLevel} from the level: L4 and L3_OR_L4 are treated as mid-level.
+ * <p>L4 and L3_OR_L4 are treated as mid-level for notification purposes.
  */
 @Getter
 public class ClassificationResult {

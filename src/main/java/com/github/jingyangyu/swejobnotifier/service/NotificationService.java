@@ -11,11 +11,11 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 /**
- * Scans for unnotified mid-level jobs every 5 minutes and sends alert emails.
+ * Scans for unnotified jobs every 5 minutes and sends alert emails by level.
  *
  * <p>Decoupled from the poll cycle: {@code JobPollingService} scrapes, filters, classifies, and
- * persists jobs with {@code midLevel=true/false}. This service independently picks up any {@code
- * midLevel=true AND notified=false} jobs and sends alerts. This design means:
+ * persists jobs with a {@code level} (L3/L4/L3_OR_L4/OTHER). This service independently picks up
+ * unnotified jobs by level and sends alerts. This design means:
  *
  * <ul>
  *   <li>No inline email sending during the poll — poll failures don't affect notifications.
@@ -38,9 +38,8 @@ public class NotificationService {
      */
     @Scheduled(cron = "${job.notification.scan.cron:0 */5 * * * *}")
     public void scanAndNotify() {
-        // L4 alerts (unchanged flow)
-        List<JobPosting> l4Unnotified =
-                repository.findByMidLevelTrueAndNotifiedFalseOrderByDetectedAtDesc();
+        // L4 alerts (mid-level: L4 or L3_OR_L4)
+        List<JobPosting> l4Unnotified = repository.findUnnotifiedMidLevelJobs();
 
         // L3 alerts (new flow)
         List<JobPosting> l3Unnotified = repository.findUnnotifiedL3Jobs();
@@ -103,7 +102,6 @@ public class NotificationService {
         long totalMarked = toMarkNotified.stream().map(JobPosting::getId).distinct().count();
         log.info("Alert scan complete — {} job(s) marked as notified", totalMarked);
 
-        metrics.setUnnotifiedCount(
-                repository.findByMidLevelTrueAndNotifiedFalseOrderByDetectedAtDesc().size());
+        metrics.setUnnotifiedCount(repository.findUnnotifiedMidLevelJobs().size());
     }
 }

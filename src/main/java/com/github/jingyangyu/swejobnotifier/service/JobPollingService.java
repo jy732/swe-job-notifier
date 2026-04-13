@@ -3,14 +3,13 @@ package com.github.jingyangyu.swejobnotifier.service;
 import com.github.jingyangyu.swejobnotifier.model.JobPosting;
 import com.github.jingyangyu.swejobnotifier.repository.JobPostingRepository;
 import com.github.jingyangyu.swejobnotifier.scraper.JobScraper;
+import com.github.jingyangyu.swejobnotifier.service.classification.ClassificationPipeline;
 import com.github.jingyangyu.swejobnotifier.service.classification.ClassificationResult;
 import com.github.jingyangyu.swejobnotifier.service.classification.JobClassifier;
 import com.github.jingyangyu.swejobnotifier.service.classification.JobTitleFilter;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -40,6 +39,7 @@ public class JobPollingService {
 
     private final List<JobScraper> scrapers;
     private final JobPostingRepository repository;
+    private final ClassificationPipeline pipeline;
     private final JobClassifier classifier;
     private final JobTitleFilter titleFilter;
     private final PipelineMetrics metrics;
@@ -48,11 +48,13 @@ public class JobPollingService {
     public JobPollingService(
             List<JobScraper> scrapers,
             JobPostingRepository repository,
+            ClassificationPipeline pipeline,
             JobClassifier classifier,
             JobTitleFilter titleFilter,
             PipelineMetrics metrics) {
         this.scrapers = scrapers;
         this.repository = repository;
+        this.pipeline = pipeline;
         this.classifier = classifier;
         this.titleFilter = titleFilter;
         this.metrics = metrics;
@@ -242,52 +244,17 @@ public class JobPollingService {
     // ── Classification + persistence ───────────────────────────────────────
 
     /**
-     * Classifies unseen jobs by level (L3/L4/L3_OR_L4/OTHER) and persists all to the DB. Jobs with
-     * obvious level indicators in the title are auto-classified locally; the rest go to Gemini for
-     * 4-way classification. {@code midLevel} is derived from the level: L4 or L3_OR_L4 → true.
+     * Classifies unseen jobs by level (L3/L4/L3_OR_L4/OTHER) via the three-stage {@link
+     * ClassificationPipeline} and persists all to the DB.
      */
     private CompanyResult classifyAndPersist(
             JobScraper scraper, String company, int scrapedCount, List<JobPosting> unseen) {
-        List<JobPosting> needsGemini = new ArrayList<>();
-        Map<JobPosting, String> autoLevelMap = new HashMap<>();
-        int autoApprovedCount = 0;
-        for (JobPosting job : unseen) {
-            String autoLevel = titleFilter.autoClassifyLevel(job);
-            if (autoLevel != null) {
-                autoLevelMap.put(job, autoLevel);
-                if ("L4".equals(autoLevel)) {
-                    autoApprovedCount++;
-                }
-            } else if (titleFilter.isObviousMidLevel(job)) {
-                autoLevelMap.put(job, "L4");
-                autoApprovedCount++;
-            } else {
-                needsGemini.add(job);
-            }
-        }
-        log.info(
-                "[{}] {} — {} unseen: {} auto-classified, {} need Gemini",
-                scraper.platform(),
-                company,
-                unseen.size(),
-                autoLevelMap.size(),
-                needsGemini.size());
-
-        List<JobPosting> geminiFailed = List.of();
-        Map<JobPosting, String> geminiLevelMap = Collections.emptyMap();
-        if (!needsGemini.isEmpty()) {
-            ClassificationResult result = classifier.classify(needsGemini);
-            geminiFailed = result.getFailed();
-            geminiLevelMap = result.getLevelMap();
-        }
-
-        // Merge level maps: auto-classified + Gemini
-        Map<JobPosting, String> levelMap = new HashMap<>(autoLevelMap);
-        levelMap.putAll(geminiLevelMap);
+        ClassificationPipeline.Result result = pipeline.classify(unseen);
+        Map<JobPosting, String> levelMap = result.levelMap();
+        List<JobPosting> geminiFailed = result.geminiFailed();
 
         int persisted = persistJobs(unseen, geminiFailed, levelMap);
 
-        // Count mid-level (L4 + L3_OR_L4)
         long midLevelCount =
                 levelMap.values().stream()
                         .filter(l -> "L4".equals(l) || "L3_OR_L4".equals(l))
@@ -301,24 +268,26 @@ public class JobPollingService {
                                 })
                         .toList();
 
+        int localCount = result.stage1Count() + result.stage2Count();
         log.info(
-                "[{}] {} — persisted {}, {} failed: {} mid-level ({} auto + {} Gemini)",
+                "[{}] {} — persisted {}, {} failed: {} mid-level ({} title + {} desc + {} Gemini)",
                 scraper.platform(),
                 company,
                 persisted,
                 geminiFailed.size(),
                 midLevelCount,
-                autoApprovedCount,
-                midLevelCount - autoApprovedCount);
+                result.stage1Count(),
+                result.stage2Count(),
+                result.stage3Count() - geminiFailed.size());
 
         return new CompanyResult(
-                allApproved, scrapedCount, unseen.size(), autoApprovedCount, needsGemini.size());
+                allApproved, scrapedCount, unseen.size(), localCount, result.stage3Count());
     }
 
     /**
      * Persists a batch of jobs, merging with any existing rows (upsert-safe). Batch-loads existing
-     * rows in a single query to avoid N+1. Sets {@code level}, derives {@code midLevel} from the
-     * level (L4 or L3_OR_L4 → true), and tracks {@code classificationFailures}.
+     * rows in a single query to avoid N+1. Sets {@code level} and tracks {@code
+     * classificationFailures}.
      *
      * @return the number of jobs persisted
      */
@@ -352,12 +321,10 @@ public class JobPollingService {
             }
             if (failedIds.contains(job.getExternalId())) {
                 target.setClassificationFailures(target.getClassificationFailures() + 1);
-                target.setMidLevel(false);
             } else {
                 String level = levelMap.get(job);
                 if (level != null) {
                     target.setLevel(level);
-                    target.setMidLevel("L4".equals(level) || "L3_OR_L4".equals(level));
                 }
                 target.setClassificationFailures(0);
             }
@@ -392,7 +359,6 @@ public class JobPollingService {
                     job.getCompany(),
                     job.getTitle());
             job.setLevel("L4");
-            job.setMidLevel(true);
             job.setClassificationFailures(0);
             repository.save(job);
             allNewJobs.add(job);
@@ -407,10 +373,9 @@ public class JobPollingService {
             JobPosting job = entry.getKey();
             String level = entry.getValue();
             job.setLevel(level);
-            job.setMidLevel("L4".equals(level) || "L3_OR_L4".equals(level));
             job.setClassificationFailures(0);
             repository.save(job);
-            if (job.isMidLevel()) {
+            if ("L4".equals(level) || "L3_OR_L4".equals(level)) {
                 allNewJobs.add(job);
             }
         }

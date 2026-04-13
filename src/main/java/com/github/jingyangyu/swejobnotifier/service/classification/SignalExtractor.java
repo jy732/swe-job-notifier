@@ -7,6 +7,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -101,12 +102,48 @@ public final class SignalExtractor {
     }
 
     /**
+     * Matches YOE patterns like "2+ years", "3-5 years", "0-1 years experience". Captures the first
+     * number (or range start) so we can infer level from experience requirements.
+     */
+    private static final Pattern YOE_PATTERN =
+            Pattern.compile("(?i)(\\d+)\\s*[+\\-–]\\s*(?:\\d+\\s*)?(?:years|yrs|yoe)");
+
+    /**
      * Returns true if any of the {@link #L3_TITLE_KEYWORDS} appear in the given title. Used for
      * local auto-classification without calling Gemini.
      */
     public static boolean hasL3TitleKeyword(String title) {
         String lower = title.toLowerCase(Locale.ROOT);
         return L3_TITLE_KEYWORDS.stream().anyMatch(lower::contains);
+    }
+
+    /**
+     * Infers a level from description signals without calling Gemini. Only returns L4 when
+     * confident (2-5 YOE); all other signals (L3 keywords, low YOE, ambiguous) are deferred to
+     * Gemini. This conservative approach avoids false L3 classifications that would cause the
+     * primary recipients to miss a mid-level job.
+     *
+     * @return "L4" if YOE signals clearly indicate mid-level (2-5 years), or {@code null} if no
+     *     confident L4 determination can be made (deferred to Gemini)
+     */
+    public static String inferLevelFromDescription(JobPosting job) {
+        String description = job.getDescription();
+        if (description == null || description.isBlank()) {
+            return null;
+        }
+        String clean = HTML_TAG_PATTERN.matcher(description).replaceAll(" ");
+
+        // Only classify L4 locally — L3 signals (keywords, low YOE) are too ambiguous
+        // ("university" could mean campus location, "graduate" could mean degree requirement)
+        Matcher m = YOE_PATTERN.matcher(clean);
+        if (m.find()) {
+            int yoe = Integer.parseInt(m.group(1));
+            if (yoe >= 2 && yoe <= 5) {
+                return "L4";
+            }
+        }
+
+        return null;
     }
 
     private static void extractFrom(String text, Signal.Source source, List<Signal> signals) {

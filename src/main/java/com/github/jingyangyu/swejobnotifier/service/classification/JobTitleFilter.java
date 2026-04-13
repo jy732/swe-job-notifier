@@ -8,20 +8,22 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
- * Multi-tier local filter that reduces Gemini API calls by pre-classifying job postings.
+ * Local filter and classifier that reduces Gemini API calls by pre-processing job postings.
  *
- * <p>Filter pipeline (applied in order by {@code JobPollingService}):
+ * <p>Provides two categories of methods, used at different pipeline stages:
  *
  * <ul>
- *   <li><b>Tier 0 — Freshness:</b> Drop jobs posted more than {@code job.retention.days} ago.
- *       Prevents re-processing stale postings that never get closed (some stay up 3+ months).
- *   <li><b>Tier 1 — Exclude:</b> Drop titles with senior/staff/manager/intern/frontend/mobile etc.
- *   <li><b>Tier 1.5 — Location:</b> Reject only jobs definitively outside the US. Unknown or
- *       ambiguous locations are accepted to avoid false negatives (missing valid US jobs).
- *   <li><b>Tier 2 — Auto-approve:</b> Titles like "Software Engineer II" are obvious mid-level;
- *       skip Gemini to save API quota.
- *   <li><b>Tier 3 — SWE-relevant gate:</b> Must contain a role keyword + title keyword to proceed
- *       to Gemini classification.
+ *   <li><b>Pre-filters</b> (used by {@code JobPollingService#applyPreFilters}):
+ *       <ul>
+ *         <li>{@link #isFresh} — Drop stale postings older than {@code job.retention.days}.
+ *         <li>{@link #shouldExclude} — Drop senior/staff/manager/intern/frontend/mobile titles.
+ *         <li>{@link #isValidUsLocation} — Reject definitively non-US locations.
+ *         <li>{@link #isSweRelevant} — Require role + title keyword for SWE relevance.
+ *       </ul>
+ *   <li><b>Classification</b> (used by {@link ClassificationPipeline} Stage 1):
+ *       <ul>
+ *         <li>{@link #autoClassifyLevel} — Assign L3/L4 from title patterns and keywords.
+ *       </ul>
  * </ul>
  *
  * <p>All keyword lists and patterns are defined in {@link FilterKeywords}.
@@ -54,14 +56,7 @@ public class JobTitleFilter {
     }
 
     /**
-     * Tier 2: Returns true if the title is an obvious mid-level SWE (e.g. "Software Engineer II").
-     */
-    public boolean isObviousMidLevel(JobPosting job) {
-        return FilterKeywords.MID_LEVEL_PATTERN.matcher(job.getTitle()).find();
-    }
-
-    /**
-     * Tier 2 (structured): Auto-classifies a job's level from the title alone.
+     * Tier 2: Auto-classifies a job's level from the title alone.
      *
      * @return "L4" for obvious mid-level, "L3" for obvious entry-level/new-grad, or null if
      *     ambiguous (needs Gemini).

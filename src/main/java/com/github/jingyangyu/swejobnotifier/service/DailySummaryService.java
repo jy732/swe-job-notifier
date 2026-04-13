@@ -42,10 +42,8 @@ public class DailySummaryService {
     public void sendDailySummary() {
         log.info("=== DAILY SUMMARY START ===");
         Instant since = Instant.now().minus(24, ChronoUnit.HOURS);
-        List<JobPosting> recentJobs =
-                repository.findByMidLevelTrueAndDetectedAtAfterOrderByDetectedAtDesc(since);
-        List<JobPosting> unnotifiedJobs =
-                repository.findByMidLevelTrueAndNotifiedFalseOrderByDetectedAtDesc();
+        List<JobPosting> recentJobs = repository.findRecentMidLevelJobs(since);
+        List<JobPosting> unnotifiedJobs = repository.findUnnotifiedMidLevelJobs();
 
         // Merge both queries and dedup by id — a job may appear in both lists
         // (e.g. detected today AND unnotified from a failed instant alert)

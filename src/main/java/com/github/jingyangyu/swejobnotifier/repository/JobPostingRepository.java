@@ -22,11 +22,19 @@ public interface JobPostingRepository extends JpaRepository<JobPosting, Long> {
     @Query("SELECT jp FROM JobPosting jp WHERE jp.company || ':' || jp.externalId IN ?1")
     List<JobPosting> findByCompanyExternalIdKeys(Set<String> keys);
 
-    /** Recent mid-level jobs for daily summary. */
-    List<JobPosting> findByMidLevelTrueAndDetectedAtAfterOrderByDetectedAtDesc(Instant since);
+    /** Recent mid-level (L4/L3_OR_L4) jobs for daily summary. */
+    @Query(
+            "SELECT jp FROM JobPosting jp WHERE jp.detectedAt > ?1"
+                    + " AND (jp.level = 'L4' OR jp.level = 'L3_OR_L4')"
+                    + " ORDER BY jp.detectedAt DESC")
+    List<JobPosting> findRecentMidLevelJobs(Instant since);
 
-    /** Unnotified mid-level jobs for the 5-minute alert scan. */
-    List<JobPosting> findByMidLevelTrueAndNotifiedFalseOrderByDetectedAtDesc();
+    /** Unnotified mid-level (L4/L3_OR_L4) jobs for the 5-minute alert scan. */
+    @Query(
+            "SELECT jp FROM JobPosting jp WHERE jp.notified = false"
+                    + " AND (jp.level = 'L4' OR jp.level = 'L3_OR_L4')"
+                    + " ORDER BY jp.detectedAt DESC")
+    List<JobPosting> findUnnotifiedMidLevelJobs();
 
     /** Finds unnotified L3 jobs (entry-level). L3_OR_L4 is included since it goes to both. */
     @Query(

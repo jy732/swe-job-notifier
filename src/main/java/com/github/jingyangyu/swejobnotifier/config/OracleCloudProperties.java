@@ -15,6 +15,7 @@ public class OracleCloudProperties {
 
     private List<OracleCloudCompany> companies = new ArrayList<>();
 
+    /** Looks up a company config by name for scraper initialization. */
     public Optional<OracleCloudCompany> findByName(String name) {
         return companies.stream().filter(c -> c.getName().equals(name)).findFirst();
     }

@@ -3,6 +3,7 @@ package com.github.jingyangyu.swejobnotifier.service;
 import com.github.jingyangyu.swejobnotifier.model.JobPosting;
 import com.github.jingyangyu.swejobnotifier.repository.JobPostingRepository;
 import com.github.jingyangyu.swejobnotifier.scraper.JobScraper;
+import com.github.jingyangyu.swejobnotifier.service.classification.ClassificationPipeline;
 import com.github.jingyangyu.swejobnotifier.service.classification.ClassificationResult;
 import com.github.jingyangyu.swejobnotifier.service.classification.JobClassifier;
 import com.github.jingyangyu.swejobnotifier.service.classification.JobTitleFilter;
@@ -38,6 +39,7 @@ public class JobPollingService {
 
     private final List<JobScraper> scrapers;
     private final JobPostingRepository repository;
+    private final ClassificationPipeline pipeline;
     private final JobClassifier classifier;
     private final JobTitleFilter titleFilter;
     private final PipelineMetrics metrics;
@@ -46,16 +48,23 @@ public class JobPollingService {
     public JobPollingService(
             List<JobScraper> scrapers,
             JobPostingRepository repository,
+            ClassificationPipeline pipeline,
             JobClassifier classifier,
             JobTitleFilter titleFilter,
             PipelineMetrics metrics) {
         this.scrapers = scrapers;
         this.repository = repository;
+        this.pipeline = pipeline;
         this.classifier = classifier;
         this.titleFilter = titleFilter;
         this.metrics = metrics;
     }
 
+    /**
+     * Main poll loop. Loads known job keys once, then iterates all scrapers in parallel, collecting
+     * new mid-level postings. Retries any jobs that failed Gemini classification in a previous
+     * cycle. Runs on the configured cron schedule (default: every 15 minutes).
+     */
     @Scheduled(cron = "${job.poll.cron}")
     public void poll() {
         log.info("=== POLL CYCLE START ===");
@@ -132,6 +141,10 @@ public class JobPollingService {
         return results;
     }
 
+    /**
+     * Wraps {@link #processCompany} in a try/catch so a single company failure doesn't kill the
+     * pool thread.
+     */
     private CompanyResult safeProcessCompany(
             JobScraper scraper, String company, Set<String> knownKeys) {
         try {
@@ -142,11 +155,16 @@ public class JobPollingService {
         }
     }
 
+    /**
+     * Waits up to {@link #COMPANY_TIMEOUT} for a company scrape to finish. On timeout, cancels
+     * without interrupting ({@code cancel(false)}) so in-progress DB writes are not corrupted. The
+     * timed-out thread finishes in the background; its result is discarded.
+     */
     private CompanyResult awaitResult(Future<CompanyResult> future, JobScraper scraper, String co) {
         try {
             return future.get(COMPANY_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
         } catch (Exception e) {
-            future.cancel(true);
+            future.cancel(false);
             metrics.recordScrapeFail();
             if (e instanceof java.util.concurrent.TimeoutException) {
                 log.warn(
@@ -163,6 +181,12 @@ public class JobPollingService {
 
     // ── Per-company pipeline ───────────────────────────────────────────────
 
+    /**
+     * Full per-company pipeline: scrape → pre-filter → dedup → fetch descriptions → classify →
+     * persist. Description fetching is deferred to post-dedup so only unseen jobs pay the cost of
+     * per-job detail page loads (Playwright scrapers). API-based scrapers already include
+     * descriptions in the scrape response, so their {@code fetchDescriptions} is a no-op.
+     */
     private CompanyResult processCompany(
             JobScraper scraper, String company, Set<String> knownKeys) {
         List<JobPosting> scraped = scraper.scrape(company);
@@ -174,9 +198,16 @@ public class JobPollingService {
             return new CompanyResult(List.of(), scraped.size(), 0, 0, 0);
         }
 
+        // Fetch descriptions only for unseen jobs (post-dedup)
+        scraper.fetchDescriptions(unseen);
+
         return classifyAndPersist(scraper, company, scraped.size(), unseen);
     }
 
+    /**
+     * Applies the filter funnel: freshness → exclude keywords → US location → SWE relevance. Logs
+     * the count at each stage for pipeline observability.
+     */
     private List<JobPosting> applyPreFilters(
             JobScraper scraper, String company, List<JobPosting> scraped) {
         List<JobPosting> fresh = scraped.stream().filter(titleFilter::isFresh).toList();
@@ -200,6 +231,10 @@ public class JobPollingService {
         return sweRelevant;
     }
 
+    /**
+     * Removes jobs already in the DB (via {@code knownKeys} snapshot) and intra-batch duplicates
+     * (via a local {@code seen} set). Both checks use the compound key {@code company:externalId}.
+     */
     private List<JobPosting> dedup(List<JobPosting> jobs, Set<String> knownKeys) {
         Set<String> seen = new HashSet<>();
         return jobs.stream()
@@ -213,59 +248,71 @@ public class JobPollingService {
 
     // ── Classification + persistence ───────────────────────────────────────
 
+    /**
+     * Classifies unseen jobs by level (L3/L4/L3_OR_L4/OTHER) via the three-stage {@link
+     * ClassificationPipeline} and persists all to the DB.
+     */
     private CompanyResult classifyAndPersist(
             JobScraper scraper, String company, int scrapedCount, List<JobPosting> unseen) {
-        List<JobPosting> autoApproved = new ArrayList<>();
-        List<JobPosting> needsGemini = new ArrayList<>();
-        for (JobPosting job : unseen) {
-            if (titleFilter.isObviousMidLevel(job)) {
-                autoApproved.add(job);
-            } else {
-                needsGemini.add(job);
-            }
-        }
+        ClassificationPipeline.Result result = pipeline.classify(unseen);
+        Map<JobPosting, String> levelMap = result.levelMap();
+        List<JobPosting> geminiFailed = result.geminiFailed();
+
+        int persisted = persistJobs(unseen, geminiFailed, levelMap);
+
+        long midLevelCount =
+                levelMap.values().stream()
+                        .filter(l -> "L4".equals(l) || "L3_OR_L4".equals(l))
+                        .count();
+        List<JobPosting> allApproved =
+                unseen.stream()
+                        .filter(
+                                j -> {
+                                    String level = levelMap.get(j);
+                                    return "L4".equals(level) || "L3_OR_L4".equals(level);
+                                })
+                        .toList();
+
+        int localCount = result.stage1Count() + result.stage2Count();
         log.info(
-                "[{}] {} — {} unseen: {} auto-approved, {} need Gemini",
-                scraper.platform(),
-                company,
-                unseen.size(),
-                autoApproved.size(),
-                needsGemini.size());
-
-        List<JobPosting> geminiApproved = List.of();
-        List<JobPosting> geminiFailed = List.of();
-        if (!needsGemini.isEmpty()) {
-            ClassificationResult result = classifier.classify(needsGemini);
-            geminiApproved = result.getApproved();
-            geminiFailed = result.getFailed();
-        }
-
-        List<JobPosting> allApproved = new ArrayList<>(autoApproved);
-        allApproved.addAll(geminiApproved);
-
-        int persisted = persistJobs(unseen, allApproved, geminiFailed);
-
-        log.info(
-                "[{}] {} — persisted {}, {} failed: {} mid-level ({} auto + {} Gemini)",
+                "[{}] {} — persisted {}, {} failed: {} mid-level ({} title + {} desc + {} Gemini)",
                 scraper.platform(),
                 company,
                 persisted,
                 geminiFailed.size(),
-                allApproved.size(),
-                autoApproved.size(),
-                geminiApproved.size());
+                midLevelCount,
+                result.stage1Count(),
+                result.stage2Count(),
+                result.stage3Count() - geminiFailed.size());
 
         return new CompanyResult(
-                allApproved, scrapedCount, unseen.size(), autoApproved.size(), needsGemini.size());
+                allApproved, scrapedCount, unseen.size(), localCount, result.stage3Count());
     }
 
+    /**
+     * Persists a batch of jobs, merging with any existing rows (upsert-safe). Batch-loads existing
+     * rows in a single query to avoid N+1. Sets {@code level} and tracks {@code
+     * classificationFailures}.
+     *
+     * @return the number of jobs persisted
+     */
     private int persistJobs(
-            List<JobPosting> toProcess, List<JobPosting> approved, List<JobPosting> geminiFailed) {
-        Set<String> approvedIds =
-                approved.stream().map(JobPosting::getExternalId).collect(Collectors.toSet());
+            List<JobPosting> toProcess,
+            List<JobPosting> geminiFailed,
+            Map<JobPosting, String> levelMap) {
         Set<String> failedIds =
                 geminiFailed.stream().map(JobPosting::getExternalId).collect(Collectors.toSet());
         Instant now = Instant.now();
+        // Batch-load existing rows in 1 query (replaces N per-job lookups)
+        Set<String> lookupKeys =
+                toProcess.stream()
+                        .map(j -> j.getCompany() + ":" + j.getExternalId())
+                        .collect(Collectors.toSet());
+        Map<String, JobPosting> existingMap =
+                repository.findByCompanyExternalIdKeys(lookupKeys).stream()
+                        .collect(
+                                Collectors.toMap(
+                                        j -> j.getCompany() + ":" + j.getExternalId(), j -> j));
         Map<String, JobPosting> toPersistMap = new LinkedHashMap<>();
         for (JobPosting job : toProcess) {
             String key = job.getCompany() + ":" + job.getExternalId();
@@ -273,21 +320,20 @@ public class JobPollingService {
                 continue; // skip intra-batch duplicates
             }
             // Merge with any existing row to avoid unique-constraint violations
-            // (the in-memory dedup set is a snapshot — duplicates can slip through)
-            JobPosting target =
-                    repository
-                            .findByCompanyAndExternalId(job.getCompany(), job.getExternalId())
-                            .orElse(job);
+            JobPosting target = existingMap.getOrDefault(key, job);
             if (target.getDetectedAt() == null) {
                 target.setDetectedAt(now);
             }
             if (failedIds.contains(job.getExternalId())) {
                 target.setClassificationFailures(target.getClassificationFailures() + 1);
-                target.setMidLevel(false);
             } else {
-                target.setMidLevel(approvedIds.contains(job.getExternalId()));
+                String level = levelMap.get(job);
+                if (level != null) {
+                    target.setLevel(level);
+                }
                 target.setClassificationFailures(0);
             }
+
             toPersistMap.put(key, target);
         }
         List<JobPosting> toPersist = new ArrayList<>(toPersistMap.values());
@@ -297,6 +343,11 @@ public class JobPollingService {
 
     // ── Gemini retry ───────────────────────────────────────────────────────
 
+    /**
+     * Retries Gemini classification for jobs that failed in previous polls. Jobs that have
+     * exhausted {@link #MAX_CLASSIFICATION_FAILURES} attempts are auto-approved as L4 (better to
+     * over-notify than silently drop a job).
+     */
     private void retryFailedClassifications(List<JobPosting> allNewJobs) {
         List<JobPosting> retryJobs =
                 repository.findByClassificationFailuresGreaterThanAndClassificationFailuresLessThan(
@@ -308,11 +359,11 @@ public class JobPollingService {
         for (JobPosting job : exhaustedJobs) {
             metrics.recordAutoApprovedFallback();
             log.warn(
-                    "Auto-approving after {} Gemini failures: [{}] {}",
+                    "Auto-approving as L4 after {} Gemini failures: [{}] {}",
                     job.getClassificationFailures(),
                     job.getCompany(),
                     job.getTitle());
-            job.setMidLevel(true);
+            job.setLevel("L4");
             job.setClassificationFailures(0);
             repository.save(job);
             allNewJobs.add(job);
@@ -323,11 +374,15 @@ public class JobPollingService {
         log.info("=== RETRY === {} job(s) pending Gemini re-classification", retryJobs.size());
         ClassificationResult result = classifier.classify(retryJobs);
 
-        for (JobPosting job : result.getApproved()) {
-            job.setMidLevel(true);
+        for (Map.Entry<JobPosting, String> entry : result.getLevelMap().entrySet()) {
+            JobPosting job = entry.getKey();
+            String level = entry.getValue();
+            job.setLevel(level);
             job.setClassificationFailures(0);
             repository.save(job);
-            allNewJobs.add(job);
+            if ("L4".equals(level) || "L3_OR_L4".equals(level)) {
+                allNewJobs.add(job);
+            }
         }
         for (JobPosting job : result.getFailed()) {
             job.setClassificationFailures(job.getClassificationFailures() + 1);
@@ -335,15 +390,15 @@ public class JobPollingService {
         }
 
         log.info(
-                "=== RETRY COMPLETE === {}/{} approved, {} failed (attempt {}+)",
-                result.getApproved().size(),
+                "=== RETRY COMPLETE === {}/{} classified, {} failed",
+                result.getLevelMap().size(),
                 retryJobs.size(),
-                result.getFailed().size(),
-                retryJobs.isEmpty() ? 0 : retryJobs.get(0).getClassificationFailures());
+                result.getFailed().size());
     }
 
     // ── Result record ──────────────────────────────────────────────────────
 
+    /** Per-company pipeline result, aggregated in {@link #poll()} for cycle-level stats. */
     private record CompanyResult(
             List<JobPosting> approved,
             int scraped,

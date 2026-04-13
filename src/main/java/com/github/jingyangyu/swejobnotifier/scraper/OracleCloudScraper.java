@@ -49,6 +49,15 @@ public class OracleCloudScraper implements JobScraper {
         return properties.getCompanies().stream().map(OracleCloudCompany::getName).toList();
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Paginates through the Oracle Recruiting Cloud REST API ({@code
+     * /hcmRestApi/resources/latest/recruitingCEJobRequisitions}) in batches of {@value #PAGE_SIZE}.
+     * The API URL is constructed from per-company config (subdomain, region, site number). Each
+     * company config maps to a specific Oracle Cloud HCM instance. On failure mid-pagination,
+     * returns partial results.
+     */
     @Override
     @SuppressWarnings("unchecked")
     public List<JobPosting> scrape(String company) {

@@ -32,6 +32,7 @@ public class EmailNotifier {
 
     private final JavaMailSender mailSender;
     private final String[] toAddresses;
+    private final String[] toAddressesL3;
     private final String fromAddress;
     private final RetryTemplate retryTemplate;
 
@@ -41,13 +42,11 @@ public class EmailNotifier {
     public EmailNotifier(
             JavaMailSender mailSender,
             @Value("${job.notification.to}") String toAddress,
+            @Value("${job.notification.to.l3:}") String toAddressL3,
             @Value("${spring.mail.username}") String fromAddress) {
         this.mailSender = mailSender;
-        this.toAddresses =
-                Arrays.stream(toAddress.split(","))
-                        .map(String::trim)
-                        .filter(s -> !s.isBlank())
-                        .toArray(String[]::new);
+        this.toAddresses = parseAddresses(toAddress);
+        this.toAddressesL3 = parseAddresses(toAddressL3);
         this.fromAddress = fromAddress;
         this.retryTemplate =
                 RetryTemplate.builder()
@@ -66,6 +65,21 @@ public class EmailNotifier {
         } else {
             log.info("Email configured: from={}, to={}", fromAddress, Arrays.toString(toAddresses));
         }
+        if (toAddressesL3.length > 0) {
+            log.info("L3 email configured: to={}", Arrays.toString(toAddressesL3));
+        } else {
+            log.info("L3 email not configured — L3 alerts will not be sent");
+        }
+    }
+
+    private static String[] parseAddresses(String addresses) {
+        if (addresses == null || addresses.isBlank()) {
+            return new String[0];
+        }
+        return Arrays.stream(addresses.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isBlank())
+                .toArray(String[]::new);
     }
 
     /**
@@ -97,6 +111,42 @@ public class EmailNotifier {
             log.error(
                     "Failed to send job alert email to {} after retries: {}",
                     Arrays.toString(toAddresses),
+                    e.getMessage(),
+                    e);
+            return false;
+        }
+    }
+
+    /**
+     * Sends an instant alert email for newly detected L3 (entry-level/new-grad) jobs.
+     *
+     * @return true if email was sent successfully, false otherwise
+     */
+    public boolean sendNewL3JobAlert(List<JobPosting> newJobs) {
+        if (toAddressesL3.length == 0) {
+            log.info("L3 email not configured — {} L3 job(s) will not be sent", newJobs.size());
+            return false;
+        }
+        if (newJobs.isEmpty()) {
+            return true;
+        }
+
+        String subject =
+                String.format(
+                        "[New Grad Alert] %d new entry-level posting(s) detected", newJobs.size());
+        log.info(
+                "Preparing L3 job alert email: to={}, subject={}",
+                Arrays.toString(toAddressesL3),
+                subject);
+        String body = buildAlertHtml(newJobs);
+        try {
+            sendHtmlEmail(subject, body, toAddressesL3);
+            log.info("L3 job alert email sent successfully to {}", Arrays.toString(toAddressesL3));
+            return true;
+        } catch (Exception e) {
+            log.error(
+                    "Failed to send L3 job alert email to {} after retries: {}",
+                    Arrays.toString(toAddressesL3),
                     e.getMessage(),
                     e);
             return false;
@@ -209,6 +259,11 @@ public class EmailNotifier {
      * @param htmlBody the HTML body content
      */
     private void sendHtmlEmail(String subject, String htmlBody) throws Exception {
+        sendHtmlEmail(subject, htmlBody, toAddresses);
+    }
+
+    private void sendHtmlEmail(String subject, String htmlBody, String[] recipients)
+            throws Exception {
         retryTemplate.execute(
                 context -> {
                     if (context.getRetryCount() > 0) {
@@ -219,7 +274,7 @@ public class EmailNotifier {
                     MimeMessage message = mailSender.createMimeMessage();
                     MimeMessageHelper helper = new MimeMessageHelper(message, true);
                     helper.setFrom(fromAddress);
-                    helper.setTo(toAddresses);
+                    helper.setTo(recipients);
                     helper.setSubject(subject);
                     helper.setText(htmlBody, true);
                     mailSender.send(message);

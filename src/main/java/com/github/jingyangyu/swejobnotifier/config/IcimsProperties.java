@@ -15,6 +15,7 @@ public class IcimsProperties {
 
     private List<IcimsCompany> companies = new ArrayList<>();
 
+    /** Looks up a company config by name for scraper initialization. */
     public Optional<IcimsCompany> findByName(String name) {
         return companies.stream().filter(c -> c.getName().equals(name)).findFirst();
     }

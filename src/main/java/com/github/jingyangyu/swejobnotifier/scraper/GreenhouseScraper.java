@@ -41,6 +41,14 @@ public class GreenhouseScraper implements JobScraper {
         return companies;
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Fetches all jobs from the Greenhouse Boards API in a single request ({@code
+     * /v1/boards/{company}/jobs?content=true}). No pagination needed — Greenhouse returns the full
+     * job list. The {@code content=true} param includes HTML job descriptions, which are stripped
+     * to plain text for signal extraction. On failure, returns an empty list.
+     */
     @Override
     @SuppressWarnings("unchecked")
     public List<JobPosting> scrape(String company) {

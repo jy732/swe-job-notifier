@@ -54,13 +54,11 @@ public class JobPosting {
     @Builder.Default
     private boolean notified = false;
 
-    /** Whether this job was classified as mid-level SWE by Gemini (Y). */
-    @Column(nullable = false, columnDefinition = "BOOLEAN DEFAULT TRUE")
-    @Builder.Default
-    private boolean midLevel = false;
-
     /** Number of consecutive Gemini classification failures. 0 = classified successfully. */
     @Column(nullable = false)
     @Builder.Default
     private int classificationFailures = 0;
+
+    /** 4-way level classification: L3, L4, L3_OR_L4, OTHER, or null if not yet classified. */
+    private String level;
 }

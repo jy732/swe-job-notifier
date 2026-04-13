@@ -26,6 +26,9 @@ public class PipelineMetrics {
     private final Counter jobsClassified;
     private final Counter jobsAutoApproved;
     private final Counter jobsAutoApprovedFallback;
+    private final Counter classifyStage1;
+    private final Counter classifyStage2;
+    private final Counter classifyStage3;
     private final Timer pollCycleTimer;
     private final AtomicInteger unnotifiedGauge;
 
@@ -84,6 +87,22 @@ public class PipelineMetrics {
                         .description("Jobs auto-approved after exhausting Gemini retries")
                         .register(registry);
 
+        classifyStage1 =
+                Counter.builder("job.classify.stage")
+                        .tag("stage", "title_rules")
+                        .description("Jobs classified by Stage 1 (title regex/keywords)")
+                        .register(registry);
+        classifyStage2 =
+                Counter.builder("job.classify.stage")
+                        .tag("stage", "description_signals")
+                        .description("Jobs classified by Stage 2 (YOE patterns in JD)")
+                        .register(registry);
+        classifyStage3 =
+                Counter.builder("job.classify.stage")
+                        .tag("stage", "gemini")
+                        .description("Jobs sent to Stage 3 (Gemini LLM)")
+                        .register(registry);
+
         pollCycleTimer =
                 Timer.builder("job.poll.duration")
                         .description("Poll cycle duration")
@@ -93,58 +112,87 @@ public class PipelineMetrics {
         registry.gauge("job.unnotified", unnotifiedGauge);
     }
 
+    /** Increments {@code job.gemini.calls{result=success}}. */
     public void recordGeminiSuccess() {
         geminiSuccess.increment();
     }
 
+    /** Increments {@code job.gemini.calls{result=failure}}. */
     public void recordGeminiFail() {
         geminiFail.increment();
     }
 
+    /** Increments {@code job.gemini.retries}. */
     public void recordGeminiRetry() {
         geminiRetry.increment();
     }
 
+    /** Increments {@code job.scrape{result=success}}. */
     public void recordScrapeSuccess() {
         scrapeSuccess.increment();
     }
 
+    /** Increments {@code job.scrape{result=failure}}. */
     public void recordScrapeFail() {
         scrapeFail.increment();
     }
 
+    /** Increments {@code job.email{result=success}}. */
     public void recordEmailSuccess() {
         emailSuccess.increment();
     }
 
+    /** Increments {@code job.email{result=failure}}. */
     public void recordEmailFail() {
         emailFail.increment();
     }
 
+    /** Adds {@code count} to {@code job.pipeline.scraped}. */
     public void recordJobsScraped(int count) {
         jobsScraped.increment(count);
     }
 
+    /** Adds {@code count} to {@code job.pipeline.classified}. */
     public void recordJobsClassified(int count) {
         jobsClassified.increment(count);
     }
 
+    /** Adds {@code count} to {@code job.pipeline.auto_approved}. */
     public void recordJobsAutoApproved(int count) {
         jobsAutoApproved.increment(count);
     }
 
+    /** Increments {@code job.pipeline.auto_approved_fallback}. */
     public void recordAutoApprovedFallback() {
         jobsAutoApprovedFallback.increment();
     }
 
+    /** Adds {@code count} to {@code job.classify.stage{stage=title_rules}}. */
+    public void recordClassifyStage1(int count) {
+        classifyStage1.increment(count);
+    }
+
+    /** Adds {@code count} to {@code job.classify.stage{stage=description_signals}}. */
+    public void recordClassifyStage2(int count) {
+        classifyStage2.increment(count);
+    }
+
+    /** Adds {@code count} to {@code job.classify.stage{stage=gemini}}. */
+    public void recordClassifyStage3(int count) {
+        classifyStage3.increment(count);
+    }
+
+    /** Sets the {@code job.unnotified} gauge to the current count. */
     public void setUnnotifiedCount(int count) {
         unnotifiedGauge.set(count);
     }
 
+    /** Starts a timer sample for measuring poll cycle duration. */
     public Timer.Sample startPollTimer() {
         return Timer.start();
     }
 
+    /** Stops the timer sample and records the duration to {@code job.poll.duration}. */
     public void stopPollTimer(Timer.Sample sample) {
         sample.stop(pollCycleTimer);
     }

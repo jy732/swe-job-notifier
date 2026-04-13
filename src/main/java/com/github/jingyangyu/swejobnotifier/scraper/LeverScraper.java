@@ -40,6 +40,14 @@ public class LeverScraper implements JobScraper {
         return companies;
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Fetches all postings from the Lever Postings API ({@code /v0/postings/{company}}) in a
+     * single request. No pagination — Lever returns the full list. Posted dates are parsed from
+     * epoch milliseconds ({@code createdAt}). Location is extracted from the {@code categories}
+     * map. On failure, returns an empty list.
+     */
     @Override
     @SuppressWarnings("unchecked")
     public List<JobPosting> scrape(String company) {

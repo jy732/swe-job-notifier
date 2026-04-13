@@ -55,6 +55,15 @@ public class MetaScraper implements JobScraper {
         return List.of("meta");
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Two-step process: (1) GET the job-search page to extract the LSD (CSRF) token via regex,
+     * then (2) POST a GraphQL query to {@code /graphql} with {@code doc_id} and search variables.
+     * Returns all matching jobs in one request — no pagination. Requires a browser-like {@code
+     * User-Agent} and CORS headers ({@code Origin}, {@code Sec-Fetch-*}). If the LSD token
+     * extraction fails or the response is non-JSON, returns an empty list.
+     */
     @Override
     public List<JobPosting> scrape(String company) {
         List<JobPosting> allJobs = new ArrayList<>();
@@ -132,6 +141,12 @@ public class MetaScraper implements JobScraper {
                 List<String> locations = (List<String>) job.get("locations");
                 String location = locations != null ? String.join("; ", locations) : "";
 
+                String description = "";
+                Object desc = job.get("description");
+                if (desc instanceof String descStr) {
+                    description = stripHtml(descStr);
+                }
+
                 allJobs.add(
                         JobPosting.builder()
                                 .company("meta")
@@ -139,7 +154,7 @@ public class MetaScraper implements JobScraper {
                                 .title(title)
                                 .url("https://www.metacareers.com/profile/job_details/" + id)
                                 .location(location)
-                                .description("")
+                                .description(description)
                                 .postedDate(null)
                                 .detectedAt(Instant.now())
                                 .build());
@@ -188,6 +203,10 @@ public class MetaScraper implements JobScraper {
             log.warn("Meta: unexpected response structure: {}", response.keySet());
             return Collections.emptyList();
         }
+    }
+
+    private static String stripHtml(String html) {
+        return html.replaceAll("<[^>]+>", " ").replaceAll("\\s+", " ").trim();
     }
 
     private static String urlEncode(String value) {

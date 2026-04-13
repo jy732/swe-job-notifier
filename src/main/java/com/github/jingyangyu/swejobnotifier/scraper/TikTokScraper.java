@@ -44,6 +44,14 @@ public class TikTokScraper implements JobScraper {
         return List.of("tiktok");
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Renders TikTok's Next.js career SPA ({@code lifeattiktok.com/search}) via Playwright with
+     * a custom user agent and 1920x1080 viewport. TikTok's API requires browser-level request
+     * headers that can't be replicated with plain HTTP, so we render the full page and extract job
+     * data from the DOM. Searches for "software engineer" keyword.
+     */
     @Override
     public List<JobPosting> scrape(String company) {
         List<JobPosting> allJobs = new ArrayList<>();
@@ -118,7 +126,6 @@ public class TikTokScraper implements JobScraper {
                                     .title(job.getOrDefault("title", ""))
                                     .url(job.getOrDefault("url", ""))
                                     .location(job.getOrDefault("location", ""))
-                                    .description("")
                                     .postedDate(null)
                                     .detectedAt(Instant.now())
                                     .build());
@@ -130,5 +137,61 @@ public class TikTokScraper implements JobScraper {
 
         log.info("TikTok: scraped {} total job(s)", allJobs.size());
         return allJobs;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Opens a fresh Playwright browser context with a custom user agent and navigates to each
+     * job's detail page. Called post-dedup so only unseen jobs pay the navigation cost.
+     */
+    @Override
+    public void fetchDescriptions(List<JobPosting> jobs) {
+        if (jobs.isEmpty()) return;
+        log.info("TikTok: fetching descriptions for {} unseen job(s)", jobs.size());
+        try (BrowserContext ctx =
+                browser.newContext(
+                        new Browser.NewContextOptions()
+                                .setUserAgent(USER_AGENT)
+                                .setViewportSize(1920, 1080))) {
+            Page page = ctx.newPage();
+            for (JobPosting job : jobs) {
+                job.setDescription(fetchJobDescription(page, job.getUrl()));
+            }
+        } catch (Exception e) {
+            log.error("TikTok: failed to fetch descriptions", e);
+        }
+    }
+
+    /**
+     * Navigates to a TikTok job detail page and extracts the description text. Returns empty string
+     * on any failure.
+     */
+    private String fetchJobDescription(Page page, String jobUrl) {
+        if (jobUrl == null || jobUrl.isBlank()) {
+            return "";
+        }
+        try {
+            page.navigate(
+                    jobUrl,
+                    new Page.NavigateOptions()
+                            .setWaitUntil(WaitUntilState.NETWORKIDLE)
+                            .setTimeout(15000));
+            Object result =
+                    page.evaluate(
+                            "() => {\n"
+                                    + "  const sections = document.querySelectorAll("
+                                    + "'section, [role=\"main\"], article, .job-detail');\n"
+                                    + "  for (const s of sections) {\n"
+                                    + "    const text = s.innerText || '';\n"
+                                    + "    if (text.length > 100) return text.substring(0, 2000);\n"
+                                    + "  }\n"
+                                    + "  return document.body?.innerText?.substring(0, 2000) || '';\n"
+                                    + "}");
+            return result instanceof String s ? s.replaceAll("\\s+", " ").trim() : "";
+        } catch (Exception e) {
+            log.debug("TikTok: failed to fetch description for {}: {}", jobUrl, e.getMessage());
+            return "";
+        }
     }
 }

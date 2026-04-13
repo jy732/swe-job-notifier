@@ -45,6 +45,15 @@ public class GoogleScraper implements JobScraper {
         return List.of("google");
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Renders Google Careers SPA ({@code google.com/about/careers/applications/jobs/results})
+     * via Playwright and paginates up to {@value #MAX_PAGES} pages. Uses structural selectors
+     * (links to job detail pages with numeric IDs) rather than class-name-dependent selectors for
+     * resilience. Pre-filters to {@code target_level=MID} and {@code location=United+States} in the
+     * URL.
+     */
     @Override
     public List<JobPosting> scrape(String company) {
         List<JobPosting> allJobs = new ArrayList<>();
@@ -126,7 +135,6 @@ public class GoogleScraper implements JobScraper {
                                     .title(job.getOrDefault("title", ""))
                                     .url(job.getOrDefault("url", ""))
                                     .location(job.getOrDefault("location", ""))
-                                    .description("")
                                     .postedDate(null)
                                     .detectedAt(Instant.now())
                                     .build());
@@ -140,6 +148,55 @@ public class GoogleScraper implements JobScraper {
         } catch (Exception e) {
             log.error("Failed to scrape Google careers", e);
             return allJobs;
+        }
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Opens a fresh Playwright browser context and navigates to each job's detail page to
+     * extract the description. Called post-dedup so only unseen jobs pay the navigation cost.
+     */
+    @Override
+    public void fetchDescriptions(List<JobPosting> jobs) {
+        if (jobs.isEmpty()) return;
+        log.info("Google: fetching descriptions for {} unseen job(s)", jobs.size());
+        try (BrowserContext ctx = browser.newContext()) {
+            Page page = ctx.newPage();
+            for (JobPosting job : jobs) {
+                job.setDescription(fetchJobDescription(page, job.getUrl()));
+            }
+        } catch (Exception e) {
+            log.error("Google: failed to fetch descriptions", e);
+        }
+    }
+
+    /**
+     * Navigates to a Google Careers job detail page and extracts the description text. Returns
+     * empty string on any failure.
+     */
+    private String fetchJobDescription(Page page, String jobUrl) {
+        if (jobUrl == null || jobUrl.isBlank()) {
+            return "";
+        }
+        try {
+            page.navigate(
+                    jobUrl, new Page.NavigateOptions().setWaitUntil(WaitUntilState.NETWORKIDLE));
+            Object result =
+                    page.evaluate(
+                            "() => {\n"
+                                    + "  const sections = document.querySelectorAll("
+                                    + "'section, [role=\"main\"], article');\n"
+                                    + "  for (const s of sections) {\n"
+                                    + "    const text = s.innerText || '';\n"
+                                    + "    if (text.length > 100) return text.substring(0, 2000);\n"
+                                    + "  }\n"
+                                    + "  return document.body?.innerText?.substring(0, 2000) || '';\n"
+                                    + "}");
+            return result instanceof String s ? s.replaceAll("\\s+", " ").trim() : "";
+        } catch (Exception e) {
+            log.debug("Google: failed to fetch description for {}: {}", jobUrl, e.getMessage());
+            return "";
         }
     }
 }

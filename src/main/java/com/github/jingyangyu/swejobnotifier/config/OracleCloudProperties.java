@@ -38,8 +38,14 @@ public class OracleCloudProperties {
         /** The career site number/identifier, e.g. "CX_1001", "CX". */
         private String siteNumber;
 
-        /** Returns the base URL for this Oracle Cloud instance. */
+        /**
+         * Returns the base URL for this Oracle Cloud instance. Handles instances with no region
+         * segment (e.g. {@code jpmc.fa.oraclecloud.com} vs {@code edel.fa.us2.oraclecloud.com}).
+         */
         public String baseUrl() {
+            if (region == null || region.isBlank()) {
+                return String.format("https://%s.fa.oraclecloud.com", subdomain);
+            }
             return String.format("https://%s.fa.%s.oraclecloud.com", subdomain, region);
         }
 

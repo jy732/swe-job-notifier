@@ -6,7 +6,7 @@ Automated job posting monitor that scrapes career pages, filters for mid-level a
 
 **Pipeline stages:**
 
-1. **Scrape** — Polls 130+ company career pages every 15 minutes using an 8-thread pool. Playwright scrapers collect metadata only (title, URL, location) — descriptions are deferred to post-dedup. API scrapers include descriptions for free in the response.
+1. **Scrape** — Polls 135+ company career pages every 15 minutes using an 8-thread pool. Playwright scrapers collect metadata only (title, URL, location) — descriptions are deferred to post-dedup. API scrapers include descriptions for free in the response.
 2. **Pre-filter** — Removes stale postings, non-US locations, excluded titles (management, intern, staff+), and non-SWE roles
 3. **Dedup** — Loads all known job keys into an in-memory set once per poll cycle for O(1) lookups (no per-job DB queries)
 4. **Fetch descriptions** — Playwright scrapers (Google, Tesla, TikTok, iCIMS) open a fresh browser context and visit detail pages only for unseen jobs. This avoids fetching ~100 descriptions for already-seen jobs that would be discarded after dedup.
@@ -21,7 +21,7 @@ Automated job posting monitor that scrapes career pages, filters for mid-level a
 
 ```mermaid
 flowchart TD
-    START(["Every 15 min"]) --> SCRAPE["Scrape career pages (8-thread pool)\nGreenhouse | Lever | Workday | Amazon\nGoogle | Apple | Microsoft | Meta | Tesla\nAshby | iCIMS | TikTok"]
+    START(["Every 15 min"]) --> SCRAPE["Scrape career pages (8-thread pool)\nGreenhouse | Lever | Workday | Amazon\nGoogle | Apple | Microsoft | Meta | Tesla\nAshby | iCIMS | TikTok | Netflix | Two Sigma"]
     SCRAPE --> FRESH["Filter: remove stale postings"]
     FRESH --> EXCLUDE["Filter: exclude intern, staff+,\nmanagement, director, VP, PhD"]
     EXCLUDE --> LOCATION["Filter: US-based roles only"]
@@ -62,9 +62,9 @@ flowchart TD
 
 | Platform | Method | Companies |
 |----------|--------|-----------|
-| **Greenhouse** (76) | JSON API | Stripe, Airbnb, Cloudflare, Datadog, Twilio, Figma, Discord, Coinbase, Robinhood, Pinterest, Dropbox, DoorDash, Instacart, Databricks, MongoDB, Elastic, GitLab, Roblox, Unity, Lyft, Block, Anthropic, Twitch, Okta, Duolingo, LinkedIn, GoDaddy, Epic Games, Roku, Reddit, Squarespace, Groupon, Yext, Thumbtack, Pure Storage, Lucid Motors, Jane Street, Nextdoor, SoFi, Coursera, Samsara, Verkada, Waymo, Scale AI, Brex, Rubrik, Applied Intuition, The Trade Desk, Lucid Software, Tower Research Capital, Geneva Trading, Bill.com, Qualtrics, ZipRecruiter, IXL Learning, Akuna Capital, Point72, Instabase, Chime, Otter.ai, Flexport, Affirm, Coupang, Ripple, Oscar, Aquatic Capital Management, Glean, Smartsheet, StubHub, IMC Trading, Nuro, Optiver, Appian, DRW, Jump Trading, Airtable |
+| **Greenhouse** (77) | JSON API | Stripe, Airbnb, Cloudflare, Datadog, Twilio, Figma, Discord, Coinbase, Robinhood, Pinterest, Dropbox, DoorDash, Instacart, Databricks, MongoDB, Elastic, GitLab, Roblox, Unity, Lyft, Block, Anthropic, Twitch, Okta, Duolingo, LinkedIn, GoDaddy, Epic Games, Roku, Reddit, Squarespace, Groupon, Yext, Thumbtack, Pure Storage, Lucid Motors, Jane Street, Nextdoor, SoFi, Coursera, Samsara, Verkada, Waymo, Scale AI, Brex, Rubrik, Applied Intuition, The Trade Desk, Lucid Software, Tower Research Capital, Geneva Trading, Bill.com, Qualtrics, ZipRecruiter, IXL Learning, Akuna Capital, Point72, Instabase, Chime, Otter.ai, Flexport, Affirm, Coupang, Ripple, Oscar, Aquatic Capital Management, Glean, Smartsheet, StubHub, IMC Trading, Nuro, Optiver, Appian, DRW, Jump Trading, Airtable, Hudson River Trading |
 | **Workday** (34) | JSON API | NVIDIA, Salesforce, Intel, Mastercard, Walmart, Adobe, Cisco, PayPal, Qualcomm, Snap, Broadcom, Visa, Dell, Micron, Zoom, Equinix, NXP, IQVIA, Slack, Proofpoint, Abbott, Blue Origin, Cadence, Capital One, Cox, CrowdStrike, HPE, Travelers, Applied Materials, Morgan Stanley, Genentech, GEICO, BlackRock, Bloomberg |
-| **Lever** (9) | JSON API | Netflix, Spotify, Palantir, Plaid, Veeva, Zoox, Quantcast, Belvedere Trading, WeRide |
+| **Lever** (8) | JSON API | Spotify, Palantir, Plaid, Veeva, Zoox, Quantcast, Belvedere Trading, WeRide |
 | **Ashby** (5) | JSON API | Whatnot, Notion, Confluent, OpenAI, Snowflake |
 | **iCIMS** (1) | Playwright | Uber |
 | **Amazon** | JSON API | Amazon |
@@ -76,6 +76,8 @@ flowchart TD
 | **TikTok** | Playwright | TikTok |
 | **SmartRecruiters** (1) | JSON API | ServiceNow |
 | **OracleCloud** (2) | JSON API | JP Morgan, Fortinet |
+| **Netflix** | JSON API (Eightfold) | Netflix |
+| **Two Sigma** | HTML scraping | Two Sigma |
 
 ## Prerequisites
 
@@ -149,16 +151,18 @@ src/main/java/com/github/jingyangyu/swejobnotifier/
 │   ├── AppleScraper.java                   # Apple Careers (Playwright)
 │   ├── AshbyScraper.java                   # Ashby API (Whatnot, Notion)
 │   ├── GoogleScraper.java                  # Google Careers (Playwright)
-│   ├── GreenhouseScraper.java              # Greenhouse JSON API (76 companies)
+│   ├── GreenhouseScraper.java              # Greenhouse JSON API (77 companies)
 │   ├── IcimsScraper.java                   # iCIMS (Playwright)
-│   ├── LeverScraper.java                   # Lever JSON API (9 companies)
+│   ├── LeverScraper.java                   # Lever JSON API (8 companies)
 │   ├── MetaScraper.java                    # Meta Careers GraphQL
 │   ├── MicrosoftScraper.java               # Microsoft PCSX API
+│   ├── NetflixScraper.java                 # Netflix Careers (Eightfold AI)
 │   ├── OracleCloudScraper.java             # OracleCloud HCM API
 │   ├── SmartRecruitersScraper.java         # SmartRecruiters API
 │   ├── TeslaScraper.java                   # Tesla Careers (Playwright)
 │   ├── TikTokScraper.java                  # TikTok Careers (Playwright)
-│   └── WorkdayScraper.java                 # Workday API (27 companies)
+│   ├── TwoSigmaScraper.java               # Two Sigma Careers (Avature HTML)
+│   └── WorkdayScraper.java                 # Workday API (34 companies)
 ├── service/
 │   ├── JobPollingService.java              # Main orchestrator (15-min cycle)
 │   ├── NotificationService.java            # Alert scanner (5-min cycle)

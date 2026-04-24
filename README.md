@@ -10,10 +10,7 @@ Automated job posting monitor that scrapes career pages, filters for mid-level a
 2. **Pre-filter** — Removes stale postings, non-US locations, excluded titles (management, intern, staff+), and non-SWE roles
 3. **Dedup** — Loads all known job keys into an in-memory set once per poll cycle for O(1) lookups (no per-job DB queries)
 4. **Fetch descriptions** — Playwright scrapers (Google, Tesla, TikTok, iCIMS) open a fresh browser context and visit detail pages only for unseen jobs. This avoids fetching ~100 descriptions for already-seen jobs that would be discarded after dedup.
-5. **Classify** — Three-stage `ClassificationPipeline` assigns a level (L3/L4/L3_OR_L4/OTHER) to each job. L4 and L3_OR_L4 are treated as mid-level for notifications.
-   - **Stage 1 — Title rules:** Regex patterns ("SWE II" → L4, "SDE 1" → L3) and L3 keywords ("new grad", "junior", "entry level"). Zero-cost, high-confidence.
-   - **Stage 2 — Description signals:** `SignalExtractor` parses YOE patterns from JDs ("3+ years" → L4, "0-1 years" → L3) and checks for L3 keywords. Still local, no API call.
-   - **Stage 3 — Gemini LLM:** Remaining ambiguous jobs are sent to Gemini 2.5 Flash in batches of 50 for 4-way classification. `SignalExtractor` provides structured `Signal` records with ~200-char context snippets from 12 consolidated keywords.
+5. **Classify** — Three-stage `ClassificationPipeline` assigns a level (L3/L4/L3_OR_L4/OTHER) to each job. L4 and L3_OR_L4 are treated as mid-level for notifications. See [Classification Pipeline](#classification-pipeline) for full details.
 6. **Persist** — All jobs batch-saved to H2 via `saveAll()` with batch-loaded existing rows (single query, no N+1); Gemini failures are retried on subsequent polls (auto-approved as L4 after 3 failures)
 7. **Email alert** — Independent 5-minute scan sends L4 alerts to primary recipients and L3/new-grad alerts to a separate recipient list
 
@@ -57,6 +54,64 @@ flowchart TD
     DAILY1(["Daily 8 AM"]) --> SUMMARY["Email summary of\nrecent activity"]
     DAILY2(["Daily 3 AM"]) --> CLEANUP["Delete jobs\nolder than 90 days"]
 ```
+
+## Classification Pipeline
+
+Every scraped job passes through pre-filters and then a three-stage classification pipeline to determine its level. Jobs that fail any pre-filter gate are silently dropped.
+
+### Pre-Filters (`JobTitleFilter`)
+
+| Filter | Logic | Example drops |
+|--------|-------|---------------|
+| **Freshness** | Reject postings older than 30 days (by `postedDate`). Jobs with no date pass through. | Stale re-posts |
+| **Exclude keywords** | Drop titles containing senior, sr., staff, principal, lead, manager, director, VP, intern, PhD, frontend, mobile, iOS, Android, embedded, security | "Senior SWE", "iOS Engineer", "Staff Platform Engineer" |
+| **US location** | Keep only US-based roles. Checks state abbreviations, city names, "United States", "Remote". Rejects known non-US patterns (Canada, UK, India, Singapore, etc.) | "London, UK", "Bangalore, India" |
+| **SWE relevance** | Require the title to match SWE-related keywords: software engineer, SDE, developer, backend, fullstack, platform, infrastructure, etc. | "Product Manager", "Data Analyst", "Hardware Engineer" |
+
+### Stage 1 — Title Rules (`JobTitleFilter.autoClassifyLevel`)
+
+Zero-cost regex classification on the job title alone:
+
+- **L4 pattern** (`FilterKeywords.L4_PATTERN`): Matches "SWE II", "SDE 2", "Software Engineer II", "Engineer 2", etc.
+- **L3 pattern** (`FilterKeywords.L3_PATTERN`): Matches "SWE I" (but not "II"), "SDE 1", "Software Engineer I", etc.
+- **L3 title keywords** (`SignalExtractor.L3_TITLE_KEYWORDS`): Title contains "new grad", "junior", "entry level", "entry-level", "university", "graduate", "college" → L3
+- Returns `null` (ambiguous) if none match → falls through to Stage 2
+
+### Stage 2 — Description Signals (`SignalExtractor.inferLevelFromDescription`)
+
+Parses the job description locally — no API call:
+
+- **YOE parsing** (`YOE_PATTERN`): Regex extracts years-of-experience requirements ("3+ years", "2-5 years", etc.)
+  - 2–5 YOE → **L4** (classified locally)
+  - 0–1 YOE → deferred to Gemini (L3 signal, but too ambiguous to auto-classify)
+- L3 keywords in descriptions ("new grad", "entry level", etc.) are extracted as `Signal` records for Gemini prompts but **not** used for local classification — this avoids false L3 classifications where "university" means campus location or "graduate" means degree requirement
+- Returns `null` if no strong L4 signal → falls through to Stage 3
+
+### Stage 3 — Gemini LLM (`JobClassifier` + `GeminiClient`)
+
+Remaining ambiguous jobs are sent to **Gemini 2.5 Flash** for 4-way classification:
+
+- **Batching**: Jobs grouped into batches of 50
+- **Prompt**: Includes job title, company, and structured `Signal` records — each signal contains a keyword match with a ~200-char context snippet extracted by `SignalExtractor` from 12 consolidated keywords (YOE terms, academic signals, new-grad indicators)
+- **Output**: Each job classified as **L3** / **L4** / **L3_OR_L4** / **OTHER**
+  - L4 and L3_OR_L4 → mid-level notifications (primary recipients)
+  - L3 → entry-level notifications (separate recipient list)
+  - OTHER → stored but not notified
+
+### Retry & Fallback
+
+- Gemini API failures increment a `classificationFailures` counter on the job
+- Failed jobs are retried on subsequent poll cycles
+- After **3 consecutive failures** → auto-approved as **L4** (mid-level) to avoid silent drops
+
+### Stage Distribution (observed, Apr 2026)
+
+| Stage | Jobs | Share |
+|-------|------|-------|
+| Stage 1 — title rules | 56 | ~10% |
+| Stage 2 — description signals | 106 | ~20% |
+| Stage 3 — Gemini LLM | 379 | ~70% |
+| **Total** | **541** over 315 poll cycles | |
 
 ## Supported Platforms
 
